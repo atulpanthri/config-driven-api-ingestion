@@ -1,0 +1,2 @@
+# Runtime (preinstalled on Databricks serverless; listed for local runs)
+requests>=2.31

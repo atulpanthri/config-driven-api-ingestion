@@ -1,0 +1,160 @@
+# USGS earthquake catalog (GeoJSON) -> earthquake bronze/silver/gold.
+# Onboarded with configuration only: records response + offset pagination, no API key.
+source_name: usgs_earthquakes
+description: Earthquakes (M2.5+) of the last 7 days per region, from the USGS FDSN event service.
+owner: data-engineering
+
+governance:
+  data_owner: data-engineering
+  data_steward: data-engineering
+  classification: public
+  retention_policy: "bronze/landing 90 days; silver/gold 2 years (documented policy, not yet enforced)"
+  retention_days: {raw: 90, silver: 730, gold: 730}   # compared with data age on the governance dashboard
+
+extraction:
+  type: api
+
+target:
+  bronze_table: earthquakes_raw             # met_raw.earthquakes_raw
+  silver_table: earthquake_events           # met_silver.earthquake_events
+  gold_table: earthquakes_daily             # met_gold.earthquakes_daily
+
+request:
+  method: GET
+  base_url: https://earthquake.usgs.gov/fdsnws/event/1/query
+  timeout_seconds: 15
+  params:
+    format: geojson
+    starttime: "{window.starttime}"
+    endtime: "{window.endtime}"
+    minlatitude: "{entity.min_latitude}"
+    maxlatitude: "{entity.max_latitude}"
+    minlongitude: "{entity.min_longitude}"
+    maxlongitude: "{entity.max_longitude}"
+    minmagnitude: "{window.min_magnitude}"
+    orderby: time-asc                      # stable order so offset pages do not shift
+  headers: {}
+  auth:
+    type: none
+  pagination:
+    type: offset
+    offset_param: offset
+    limit_param: limit
+    limit: 10                              # small on purpose so pagination is exercised
+    start: 1                               # USGS offsets are 1-based
+    max_pages: 50
+
+retry:
+  max_attempts: 3
+  backoff_base_seconds: 1.0
+  backoff_cap_seconds: 8.0
+  retry_after_cap_seconds: 30
+  retry_statuses: [429, 500, 502, 503, 504]
+
+window:
+  starttime: {type: relative_date, offset_days: -7}
+  endtime: {type: relative_date, offset_days: 0}
+  min_magnitude: {value: "2.5", type: string}
+
+entities:
+  id_field: region_id
+  min_count: 5
+  columns:
+    - {name: region_id, type: string, description: Stable region identifier from config}
+    - {name: region_name, type: string, description: Display name of the region}
+    - {name: min_latitude, type: double}
+    - {name: max_latitude, type: double}
+    - {name: min_longitude, type: double}
+    - {name: max_longitude, type: double}
+  items:
+    - {region_id: japan,      region_name: Japan,      min_latitude: 30,  max_latitude: 46, min_longitude: 128,  max_longitude: 146}
+    - {region_id: california, region_name: California, min_latitude: 32,  max_latitude: 42, min_longitude: -125, max_longitude: -114}
+    - {region_id: alaska,     region_name: Alaska,     min_latitude: 51,  max_latitude: 72, min_longitude: -180, max_longitude: -130}
+    - {region_id: indonesia,  region_name: Indonesia,  min_latitude: -11, max_latitude: 6,  min_longitude: 95,   max_longitude: 141}
+    - {region_id: chile,      region_name: Chile,      min_latitude: -56, max_latitude: -17, min_longitude: -76, max_longitude: -66}
+
+response:
+  format: records
+  data_path: features
+  allow_empty: true                        # a quiet week in a region is valid, not a failure
+  contract:
+    id:                    {type: string, required: true}
+    properties.time:       {type: integer, required: true}
+    properties.mag:        {type: number, required: true}
+    properties.place:      {type: string, required: false}
+    properties.type:       {type: string, required: false}
+    properties.updated:    {type: integer, required: false}
+    geometry.coordinates.0: {type: number, required: true}
+    geometry.coordinates.1: {type: number, required: true}
+    geometry.coordinates.2: {type: number, required: false}
+  ignore_fields:                           # known fields we deliberately do not load
+    - type
+    - geometry.type
+    - properties.tz
+    - properties.url
+    - properties.detail
+    - properties.felt
+    - properties.cdi
+    - properties.mmi
+    - properties.alert
+    - properties.status
+    - properties.tsunami
+    - properties.sig
+    - properties.net
+    - properties.code
+    - properties.ids
+    - properties.sources
+    - properties.types
+    - properties.nst
+    - properties.dmin
+    - properties.rms
+    - properties.gap
+    - properties.magType
+    - properties.title
+
+silver:
+  keys: [region_id, event_id]
+  partition_by: [event_date_utc]
+  numeric_strings: convert
+  duplicate_reason: DUPLICATE_EVENT
+  columns:
+    - {name: event_id, source: id, type: string, required: true, description: USGS event id (merge key with region_id)}
+    - {name: event_time_utc, source: properties.time, type: timestamp, format: epoch_ms, required: true,
+       reason_name: EVENT_TIME, description: Origin time of the event in UTC}
+    - {name: magnitude, source: properties.mag, type: double, required: true, description: Reported magnitude,
+       min: {value: -2, reason: MAGNITUDE_OUT_OF_RANGE}, max: {value: 10, reason: MAGNITUDE_OUT_OF_RANGE}}
+    - {name: place, source: properties.place, type: string, description: Human-readable location}
+    - {name: event_type, source: properties.type, type: string}
+    - {name: source_updated_utc, source: properties.updated, type: timestamp, format: epoch_ms}
+    - {name: event_longitude, source: geometry.coordinates.0, type: double, required: true,
+       min: {value: -180, reason: LONGITUDE_OUT_OF_RANGE}, max: {value: 180, reason: LONGITUDE_OUT_OF_RANGE}}
+    - {name: event_latitude, source: geometry.coordinates.1, type: double, required: true,
+       min: {value: -90, reason: LATITUDE_OUT_OF_RANGE}, max: {value: 90, reason: LATITUDE_OUT_OF_RANGE}}
+    - {name: depth_km, source: geometry.coordinates.2, type: double, description: Hypocentre depth in km,
+       min: {value: -10, reason: DEPTH_OUT_OF_RANGE}, max: {value: 800, reason: DEPTH_OUT_OF_RANGE}}
+  derived:
+    - {name: event_date_utc, type: date, from: event_time_utc, description: UTC calendar date of the event}
+
+gold:
+  sql_file: sql/gold/usgs_earthquakes.sql
+  keys: [region_id, event_date_utc]
+  column_descriptions:
+    quake_count: Events of the UTC day in the region (M2.5+)
+    max_magnitude: Largest magnitude of the day
+    avg_magnitude: Mean magnitude of the day
+    strongest_place: Place of the largest event
+    avg_depth_km: Mean depth (km)
+    significant_quakes: Events with magnitude >= significant_mag (demo threshold)
+  params:
+    significant_mag: 4.5                   # demo threshold
+
+fixtures_dir: tests/fixtures/usgs_earthquakes
+
+fault_injection:
+  default_target: japan
+  scenarios:
+    bad_request:         {action: override_param, param: minlatitude, value: 999}
+    invalid_magnitude:   {action: set_value, field: properties.mag, index: 0, value: 15}
+    bad_magnitude_type:  {action: set_value, field: properties.mag, index: 0, value: "ABC"}
+    missing_field:       {action: drop_field, field: properties.time}
+    new_field:           {action: add_field, field: properties.new_metric, value: 1}

@@ -1,0 +1,1408 @@
+{
+  "datasets": [
+    {
+      "name": "wx_daily",
+      "displayName": "Weather daily (gold)",
+      "queryLines": [
+        "SELECT location_name, weather_date_utc, min_temperature_c, avg_temperature_c, max_temperature_c,\n       total_precipitation_mm, precipitation_hours, max_wind_speed_kmh, avg_relative_humidity_pct,\n       CAST(heat_alert AS INT) AS heat_alert_day, CAST(high_wind_alert AS INT) AS wind_alert_day,\n       CAST(heavy_precipitation_alert AS INT) AS heavy_precip_alert_day, is_complete_day\nFROM workspace.met_gold.weather_daily\n"
+      ]
+    },
+    {
+      "name": "wx_hourly",
+      "displayName": "Weather hourly (silver)",
+      "queryLines": [
+        "SELECT location_name, timestamp_utc, temperature_c, relative_humidity_pct, precipitation_mm, wind_speed_kmh\nFROM workspace.met_silver.weather_hourly\n"
+      ]
+    },
+    {
+      "name": "wx_compare",
+      "displayName": "City comparison",
+      "queryLines": [
+        "SELECT location_name,\n       MIN(min_temperature_c)                  AS window_min_temp_c,\n       MAX(max_temperature_c)                  AS window_max_temp_c,\n       ROUND(AVG(avg_temperature_c), 1)        AS window_avg_temp_c,\n       ROUND(SUM(total_precipitation_mm), 1)   AS window_precip_mm,\n       COUNT_IF(total_precipitation_mm >= 1.0) AS wet_days,\n       MAX(max_wind_speed_kmh)                 AS window_max_wind_kmh,\n       COUNT_IF(heat_alert OR high_wind_alert OR heavy_precipitation_alert) AS alert_days\nFROM workspace.met_gold.weather_daily GROUP BY location_name\n"
+      ]
+    },
+    {
+      "name": "wx_alerts",
+      "displayName": "Alert days",
+      "queryLines": [
+        "SELECT weather_date_utc, location_name, max_temperature_c, max_wind_speed_kmh, total_precipitation_mm,\n       concat_ws(', ', IF(heat_alert, 'heat', NULL), IF(high_wind_alert, 'high wind', NULL),\n                 IF(heavy_precipitation_alert, 'heavy precipitation', NULL)) AS alerts\nFROM workspace.met_gold.weather_daily\nWHERE heat_alert OR high_wind_alert OR heavy_precipitation_alert\n"
+      ]
+    },
+    {
+      "name": "wx_updated",
+      "displayName": "Last updated (gold)",
+      "queryLines": [
+        "SELECT concat(date_format(MAX(updated_at), 'yyyy-MM-dd HH:mm'), ' UTC') AS last_updated\nFROM workspace.met_gold.weather_daily\n"
+      ]
+    },
+    {
+      "name": "eq_daily",
+      "displayName": "Earthquakes daily (gold)",
+      "queryLines": [
+        "SELECT region_name, event_date_utc, quake_count, max_magnitude, avg_magnitude, significant_quakes, strongest_place\nFROM workspace.met_gold.earthquakes_daily\n"
+      ]
+    },
+    {
+      "name": "eq_region",
+      "displayName": "Earthquakes by region",
+      "queryLines": [
+        "SELECT region_name, SUM(quake_count) AS quakes, MAX(max_magnitude) AS max_magnitude,\n       SUM(significant_quakes) AS significant_quakes\nFROM workspace.met_gold.earthquakes_daily GROUP BY region_name\n"
+      ]
+    },
+    {
+      "name": "eq_top",
+      "displayName": "Strongest events",
+      "queryLines": [
+        "SELECT event_time_utc, region_name, magnitude, place, depth_km\nFROM workspace.met_silver.earthquake_events ORDER BY magnitude DESC LIMIT 15\n"
+      ]
+    },
+    {
+      "name": "eq_updated",
+      "displayName": "Last updated (gold)",
+      "queryLines": [
+        "SELECT concat(date_format(MAX(updated_at), 'yyyy-MM-dd HH:mm'), ' UTC') AS last_updated\nFROM workspace.met_gold.earthquakes_daily\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "dbefd662",
+      "displayName": "Weather",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "32931b65",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Meteorological data\n",
+                "Open-Meteo forecast for 5 cities, hourly \u2192 daily (UTC days), from `met_silver` / `met_gold`. Alert flags use **demo thresholds** from the source YAML, not official warnings."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "18d55c54",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_updated",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "last_updated",
+                      "expression": "`last_updated`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "last_updated",
+                    "displayName": "last_updated"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Last updated"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "e6dd99ac",
+            "queries": [
+              {
+                "name": "filter_dd5f6143",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_7b807231",
+                "query": {
+                  "datasetName": "wx_hourly",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_b11a56d9",
+                "query": {
+                  "datasetName": "wx_compare",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_fab9a985",
+                "query": {
+                  "datasetName": "wx_alerts",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "location_name",
+                    "displayName": "location_name",
+                    "queryName": "filter_dd5f6143"
+                  },
+                  {
+                    "fieldName": "location_name",
+                    "displayName": "location_name",
+                    "queryName": "filter_7b807231"
+                  },
+                  {
+                    "fieldName": "location_name",
+                    "displayName": "location_name",
+                    "queryName": "filter_b11a56d9"
+                  },
+                  {
+                    "fieldName": "location_name",
+                    "displayName": "location_name",
+                    "queryName": "filter_fab9a985"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "City"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "05289da2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "COUNT(DISTINCT `location_name`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Cities"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Cities"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "3f70f61e",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`max_temperature_c`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Hottest hour (\u00b0C)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Hottest hour (\u00b0C)"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "b4c671f9",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`total_precipitation_mm`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Total precipitation (mm)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total precipitation (mm)"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ea225aff",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`heat_alert_day`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Heat alert days"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Heat alert days"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ad86319d",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`wind_alert_day`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "High-wind alert days"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "High-wind alert days"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 5,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "53901a95",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`heavy_precip_alert_day`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Heavy-rain alert days"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Heavy-rain alert days"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "de048ad7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_hourly",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "timestamp_utc",
+                      "expression": "`timestamp_utc`"
+                    },
+                    {
+                      "name": "temperature_c",
+                      "expression": "`temperature_c`"
+                    },
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "timestamp_utc",
+                  "displayName": "Hour (UTC)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Hour (UTC)"
+                  }
+                },
+                "y": {
+                  "fieldName": "temperature_c",
+                  "displayName": "\u00b0C",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "\u00b0C"
+                  }
+                },
+                "color": {
+                  "fieldName": "location_name",
+                  "displayName": "location_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Hourly temperature by city (\u00b0C)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "a9f77cd9",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "weather_date_utc",
+                      "expression": "`weather_date_utc`"
+                    },
+                    {
+                      "name": "total_precipitation_mm",
+                      "expression": "`total_precipitation_mm`"
+                    },
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "weather_date_utc",
+                  "displayName": "Date (UTC)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Date (UTC)"
+                  }
+                },
+                "y": {
+                  "fieldName": "total_precipitation_mm",
+                  "displayName": "mm",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "mm"
+                  }
+                },
+                "color": {
+                  "fieldName": "location_name",
+                  "displayName": "location_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Daily precipitation by city (mm)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "42c58546",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "weather_date_utc",
+                      "expression": "`weather_date_utc`"
+                    },
+                    {
+                      "name": "max_wind_speed_kmh",
+                      "expression": "`max_wind_speed_kmh`"
+                    },
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "weather_date_utc",
+                  "displayName": "Date (UTC)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Date (UTC)"
+                  }
+                },
+                "y": {
+                  "fieldName": "max_wind_speed_kmh",
+                  "displayName": "km/h",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "km/h"
+                  }
+                },
+                "color": {
+                  "fieldName": "location_name",
+                  "displayName": "location_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Daily maximum wind by city (km/h)"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 13,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "68eb900a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_daily",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "weather_date_utc",
+                      "expression": "`weather_date_utc`"
+                    },
+                    {
+                      "name": "avg_temperature_c",
+                      "expression": "`avg_temperature_c`"
+                    },
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "weather_date_utc",
+                  "displayName": "Date (UTC)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Date (UTC)"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg_temperature_c",
+                  "displayName": "\u00b0C",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "\u00b0C"
+                  }
+                },
+                "color": {
+                  "fieldName": "location_name",
+                  "displayName": "location_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Daily average temperature (\u00b0C)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 19,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "17c1d446",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_compare",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    },
+                    {
+                      "name": "window_min_temp_c",
+                      "expression": "`window_min_temp_c`"
+                    },
+                    {
+                      "name": "window_max_temp_c",
+                      "expression": "`window_max_temp_c`"
+                    },
+                    {
+                      "name": "window_avg_temp_c",
+                      "expression": "`window_avg_temp_c`"
+                    },
+                    {
+                      "name": "window_precip_mm",
+                      "expression": "`window_precip_mm`"
+                    },
+                    {
+                      "name": "wet_days",
+                      "expression": "`wet_days`"
+                    },
+                    {
+                      "name": "window_max_wind_kmh",
+                      "expression": "`window_max_wind_kmh`"
+                    },
+                    {
+                      "name": "alert_days",
+                      "expression": "`alert_days`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "location_name",
+                    "displayName": "location_name"
+                  },
+                  {
+                    "fieldName": "window_min_temp_c",
+                    "displayName": "window_min_temp_c"
+                  },
+                  {
+                    "fieldName": "window_max_temp_c",
+                    "displayName": "window_max_temp_c"
+                  },
+                  {
+                    "fieldName": "window_avg_temp_c",
+                    "displayName": "window_avg_temp_c"
+                  },
+                  {
+                    "fieldName": "window_precip_mm",
+                    "displayName": "window_precip_mm"
+                  },
+                  {
+                    "fieldName": "wet_days",
+                    "displayName": "wet_days"
+                  },
+                  {
+                    "fieldName": "window_max_wind_kmh",
+                    "displayName": "window_max_wind_kmh"
+                  },
+                  {
+                    "fieldName": "alert_days",
+                    "displayName": "alert_days"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "City comparison (loaded window)"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 19,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "efd9e335",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "wx_alerts",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "weather_date_utc",
+                      "expression": "`weather_date_utc`"
+                    },
+                    {
+                      "name": "location_name",
+                      "expression": "`location_name`"
+                    },
+                    {
+                      "name": "alerts",
+                      "expression": "`alerts`"
+                    },
+                    {
+                      "name": "max_temperature_c",
+                      "expression": "`max_temperature_c`"
+                    },
+                    {
+                      "name": "max_wind_speed_kmh",
+                      "expression": "`max_wind_speed_kmh`"
+                    },
+                    {
+                      "name": "total_precipitation_mm",
+                      "expression": "`total_precipitation_mm`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "weather_date_utc",
+                    "displayName": "weather_date_utc"
+                  },
+                  {
+                    "fieldName": "location_name",
+                    "displayName": "location_name"
+                  },
+                  {
+                    "fieldName": "alerts",
+                    "displayName": "alerts"
+                  },
+                  {
+                    "fieldName": "max_temperature_c",
+                    "displayName": "max_temperature_c"
+                  },
+                  {
+                    "fieldName": "max_wind_speed_kmh",
+                    "displayName": "max_wind_speed_kmh"
+                  },
+                  {
+                    "fieldName": "total_precipitation_mm",
+                    "displayName": "total_precipitation_mm"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Alert days (demo thresholds)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 12,
+            "height": 5
+          }
+        }
+      ]
+    },
+    {
+      "name": "243cefe1",
+      "displayName": "Earthquakes",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "e10e82c6",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Earthquake activity\n",
+                "USGS catalog (M2.5+, last 7 days) for 5 regions. This source was onboarded **by configuration only** (`sources/usgs_earthquakes.yml`)."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "18d55c54",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "eq_updated",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "last_updated",
+                      "expression": "`last_updated`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "last_updated",
+                    "displayName": "last_updated"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Last updated"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "4e79eaf6",
+            "queries": [
+              {
+                "name": "filter_2f343f2e",
+                "query": {
+                  "datasetName": "eq_daily",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "region_name",
+                      "expression": "`region_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_30e1484a",
+                "query": {
+                  "datasetName": "eq_region",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "region_name",
+                      "expression": "`region_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_1903927b",
+                "query": {
+                  "datasetName": "eq_top",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "region_name",
+                      "expression": "`region_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "region_name",
+                    "displayName": "region_name",
+                    "queryName": "filter_2f343f2e"
+                  },
+                  {
+                    "fieldName": "region_name",
+                    "displayName": "region_name",
+                    "queryName": "filter_30e1484a"
+                  },
+                  {
+                    "fieldName": "region_name",
+                    "displayName": "region_name",
+                    "queryName": "filter_1903927b"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Region"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "24ebc164",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "eq_region",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`quakes`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Earthquakes"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Earthquakes"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "467761ff",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "eq_region",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`max_magnitude`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Largest magnitude"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Largest magnitude"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "5f348b55",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "eq_region",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`significant_quakes`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Significant quakes (M4.5+)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Significant quakes (M4.5+)"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "db237a1f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "eq_daily",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "event_date_utc",
+                      "expression": "`event_date_utc`"
+                    },
+                    {
+                      "name": "quake_count",
+                      "expression": "`quake_count`"
+                    },
+                    {
+                      "name": "region_name",
+                      "expression": "`region_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_date_utc",
+                  "displayName": "Date (UTC)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Date (UTC)"
+                  }
+                },
+                "y": {
+                  "fieldName": "quake_count",
+                  "displayName": "events",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "events"
+                  }
+                },
+                "color": {
+                  "fieldName": "region_name",
+                  "displayName": "region_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Earthquakes per day by region"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "835f05dc",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "eq_region",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "region_name",
+                      "expression": "`region_name`"
+                    },
+                    {
+                      "name": "max_magnitude",
+                      "expression": "`max_magnitude`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "region_name",
+                  "displayName": "Region",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Region"
+                  }
+                },
+                "y": {
+                  "fieldName": "max_magnitude",
+                  "displayName": "magnitude",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "magnitude"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Largest magnitude by region"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "26135bb6",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "eq_top",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "event_time_utc",
+                      "expression": "`event_time_utc`"
+                    },
+                    {
+                      "name": "region_name",
+                      "expression": "`region_name`"
+                    },
+                    {
+                      "name": "magnitude",
+                      "expression": "`magnitude`"
+                    },
+                    {
+                      "name": "place",
+                      "expression": "`place`"
+                    },
+                    {
+                      "name": "depth_km",
+                      "expression": "`depth_km`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "event_time_utc",
+                    "displayName": "event_time_utc"
+                  },
+                  {
+                    "fieldName": "region_name",
+                    "displayName": "region_name"
+                  },
+                  {
+                    "fieldName": "magnitude",
+                    "displayName": "magnitude"
+                  },
+                  {
+                    "fieldName": "place",
+                    "displayName": "place"
+                  },
+                  {
+                    "fieldName": "depth_km",
+                    "displayName": "depth_km"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Strongest events"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 11,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+resources:
+  jobs:
+    # Resource key kept from the first version so deploys update the existing job (and keep its history).
+    weather_pipeline_job:
+      name: api_ingest_job
+      description: Config-driven API ingestion. Pick the source with the `source` parameter (a file in sources/).
+      max_concurrent_runs: 1          # runs MERGE into shared tables; keep them sequential
+      # No cluster definitions: tasks run on serverless compute (the only option on Free Edition).
+      parameters:
+        - name: source
+          default: open_meteo_weather
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema_suffix
+          default: ""                 # e.g. _edge -> met_raw_edge, met_silver_edge, ... (demo isolation)
+        - name: source_mode
+          default: live
+        - name: test_mode
+          default: none
+        - name: fault_entity_id
+          default: ""                 # empty = fault_injection.default_target
+        - name: replay_run_id
+          default: ""
+        - name: window
+          default: ""                 # JSON overrides, e.g. {"forecast_days": 5}
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: ../notebooks/00_setup.py
+        - task_key: run_pipeline
+          depends_on:
+            - task_key: setup
+          notebook_task:
+            notebook_path: ../notebooks/01_run_pipeline.py
+        - task_key: validation
+          depends_on:
+            - task_key: run_pipeline
+          notebook_task:
+            notebook_path: ../notebooks/02_validation.py
+        # Refresh the published dashboards so they show this run (published dashboards serve cached results).
+        # ALL_DONE: refresh even when the pipeline or validation failed, so the failure is visible.
+        - task_key: refresh_meteorological_dashboard
+          depends_on:
+            - task_key: validation
+          run_if: ALL_DONE
+          dashboard_task:
+            dashboard_id: ${resources.dashboards.business_insights.id}
+            warehouse_id: ${var.warehouse_id}
+        - task_key: refresh_monitoring_dashboard
+          depends_on:
+            - task_key: validation
+          run_if: ALL_DONE
+          dashboard_task:
+            dashboard_id: ${resources.dashboards.pipeline_monitoring.id}
+            warehouse_id: ${var.warehouse_id}
+        - task_key: refresh_governance_dashboard
+          depends_on:
+            - task_key: validation
+          run_if: ALL_DONE
+          dashboard_task:
+            dashboard_id: ${resources.dashboards.data_governance.id}
+            warehouse_id: ${var.warehouse_id}
+      # Paused for the take-home. Production: one schedule per source (or a for_each_task over sources).
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: UTC
+        pause_status: PAUSED

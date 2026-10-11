@@ -1,0 +1,139 @@
+# Open-Meteo hourly forecast -> weather bronze/silver/gold.
+# Everything source-specific lives here; the engine in src/ingest_framework is generic.
+source_name: open_meteo_weather
+description: Hourly forecast (temperature, humidity, precipitation, wind) for configured cities.
+owner: data-engineering
+
+governance:                                 # applied as Unity Catalog tags + column comments by the setup task
+  data_owner: data-engineering
+  data_steward: data-engineering
+  classification: public                    # public | internal | confidential | restricted
+  retention_policy: "bronze/landing 90 days; silver/gold 2 years (documented policy, not yet enforced)"
+  retention_days: {raw: 90, silver: 730, gold: 730}   # compared with data age on the governance dashboard
+
+extraction:
+  type: api                                 # api | file | db (file and db: planned, not implemented yet)
+
+target:                                     # tables in the layer schemas from framework.yml
+  bronze_table: weather_raw                 # met_raw.weather_raw
+  silver_table: weather_hourly              # met_silver.weather_hourly
+  gold_table: weather_daily                 # met_gold.weather_daily
+
+request:
+  method: GET
+  base_url: https://api.open-meteo.com/v1/forecast
+  timeout_seconds: 10
+  params:                                   # {entity.x} / {window.x}; a param rendering to null is omitted
+    latitude: "{entity.latitude}"
+    longitude: "{entity.longitude}"
+    hourly: temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m
+    timezone: UTC
+    forecast_days: "{window.forecast_days}"
+    start_date: "{window.start_date}"
+    end_date: "{window.end_date}"
+  headers: {}
+  auth:
+    type: none
+  pagination:
+    type: none
+
+retry:
+  max_attempts: 3
+  backoff_base_seconds: 1.0
+  backoff_cap_seconds: 8.0
+  retry_after_cap_seconds: 30
+  retry_statuses: [429, 500, 502, 503, 504]
+
+window:                                     # override per run with the job parameter `window` (JSON)
+  forecast_days: {value: 3, type: int, min: 3, max: 7}
+  start_date: {value: null, type: date}     # set start_date + end_date and forecast_days=null for a fixed window
+  end_date: {value: null, type: date}
+
+entities:
+  id_field: location_id
+  min_count: 5
+  columns:                                  # entity attributes copied to silver, with explicit types
+    - {name: location_id, type: string, description: Stable location identifier from config}
+    - {name: location_name, type: string, description: Display name of the city}
+    - {name: latitude, type: double, description: Configured latitude (WGS84 degrees)}
+    - {name: longitude, type: double, description: Configured longitude (WGS84 degrees)}
+  items:
+    - {location_id: tokyo,     location_name: Tokyo,     latitude: 35.6762,  longitude: 139.6503}
+    - {location_id: singapore, location_name: Singapore, latitude: 1.3521,   longitude: 103.8198}
+    - {location_id: london,    location_name: London,    latitude: 51.5072,  longitude: -0.1276}
+    - {location_id: new_york,  location_name: New York,  latitude: 40.7128,  longitude: -74.0060}
+    - {location_id: sydney,    location_name: Sydney,    latitude: -33.8688, longitude: 151.2093}
+
+response:
+  format: columnar                          # parallel arrays under data_path
+  data_path: hourly
+  error_flag_path: error
+  error_message_path: reason
+  utc_offset_path: utc_offset_seconds
+  allow_empty: false
+  contract:                                 # expected fields under data_path
+    time:                 {type: string, required: true}
+    temperature_2m:       {type: number, required: true, unit_path: hourly_units.temperature_2m, unit: "°C"}
+    relative_humidity_2m: {type: number, required: true, unit_path: hourly_units.relative_humidity_2m, unit: "%"}
+    precipitation:        {type: number, required: true, unit_path: hourly_units.precipitation, unit: "mm"}
+    wind_speed_10m:       {type: number, required: true, unit_path: hourly_units.wind_speed_10m, unit: "km/h"}
+  ignore_fields: []
+
+silver:
+  keys: [location_id, timestamp_utc]
+  partition_by: [weather_date_utc]          # met_silver.weather_hourly partitioned by UTC date
+  numeric_strings: convert                  # "21.5" accepted (logged as TYPE_CHANGE); "ABC" rejected
+  duplicate_reason: DUPLICATE_TIMESTAMP
+  columns:
+    - {name: timestamp_utc, source: time, type: timestamp, format: "%Y-%m-%dT%H:%M", required: true,
+       on_the_hour: true, reason_name: TIMESTAMP, description: Forecast hour start in UTC (merge key)}
+    - {name: temperature_c, source: temperature_2m, type: double, required: true, reason_name: TEMPERATURE,
+       description: Air temperature at 2 m in degrees Celsius,
+       min: {value: -90, reason: TEMPERATURE_OUT_OF_RANGE}, max: {value: 60, reason: TEMPERATURE_OUT_OF_RANGE}}
+    - {name: relative_humidity_pct, source: relative_humidity_2m, type: double, required: true, reason_name: HUMIDITY,
+       description: Relative humidity at 2 m in percent (0-100),
+       min: {value: 0, reason: HUMIDITY_BELOW_ZERO}, max: {value: 100, reason: HUMIDITY_ABOVE_100}}
+    - {name: precipitation_mm, source: precipitation, type: double, required: true, reason_name: PRECIPITATION,
+       description: Total precipitation (rain + showers + snow) of the preceding hour in mm,
+       min: {value: 0, reason: NEGATIVE_PRECIPITATION}}
+    - {name: wind_speed_kmh, source: wind_speed_10m, type: double, required: true, reason_name: WIND_SPEED,
+       description: Wind speed at 10 m in km/h,
+       min: {value: 0, reason: NEGATIVE_WIND_SPEED}}
+  derived:
+    - {name: weather_date_utc, type: date, from: timestamp_utc, description: UTC calendar date of timestamp_utc}
+
+gold:
+  sql_file: sql/gold/open_meteo_weather.sql
+  keys: [location_id, weather_date_utc]
+  column_descriptions:
+    min_temperature_c: Minimum hourly temperature of the UTC day (C)
+    max_temperature_c: Maximum hourly temperature of the UTC day (C)
+    avg_temperature_c: Mean hourly temperature of the UTC day (C)
+    total_precipitation_mm: Sum of hourly precipitation of the UTC day (mm)
+    max_wind_speed_kmh: Maximum hourly wind speed of the UTC day (km/h)
+    avg_relative_humidity_pct: Mean hourly relative humidity of the UTC day (%)
+    precipitation_hours: Hours with precipitation >= rainy_mm
+    valid_hours: Hours that passed data quality (24 = complete day)
+    is_complete_day: True when all 24 hours are present
+    heat_alert: Demo rule - max temperature >= heat_c (not an official warning)
+    high_wind_alert: Demo rule - max wind >= wind_kmh (not an official warning)
+    heavy_precipitation_alert: Demo rule - daily precipitation >= heavy_mm (not an official warning)
+  params:                                   # demo thresholds, not official warnings
+    rainy_mm: 0.1
+    heat_c: 30.0
+    wind_kmh: 40.0
+    heavy_mm: 20.0
+
+fixtures_dir: tests/fixtures/open_meteo
+
+fault_injection:
+  default_target: london
+  scenarios:
+    bad_request:          {action: override_param, param: latitude, value: 999}
+    invalid_humidity:     {action: set_value, field: relative_humidity_2m, index: 0, value: 130}
+    bad_temperature_type: {action: set_value, field: temperature_2m, index: 1, value: "ABC"}
+    numeric_string:       {action: set_value, field: temperature_2m, index: 2, value: "21.5"}
+    null_values:          {action: set_null, field: wind_speed_10m, index: 3}
+    invalid_timestamp:    {action: set_value, field: time, index: 4, value: "2026-13-45T99:00"}
+    missing_field:        {action: drop_field, field: precipitation}
+    new_field:            {action: add_field, field: cloud_cover, value: 50}

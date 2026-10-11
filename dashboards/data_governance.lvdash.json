@@ -1,0 +1,3905 @@
+{
+  "datasets": [
+    {
+      "name": "own_kpi",
+      "displayName": "Ownership KPIs",
+      "queryLines": [
+        "SELECT COUNT(*) AS datasets,\n       COUNT_IF(data_owner IS NULL OR data_steward IS NULL) AS without_owner_or_steward,\n       COUNT(DISTINCT data_owner) AS distinct_owners,\n       COUNT(DISTINCT data_steward) AS distinct_stewards\nFROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine'))\n"
+      ]
+    },
+    {
+      "name": "own_tbl",
+      "displayName": "Dataset ownership",
+      "queryLines": [
+        "SELECT schema_name, table_name, layer, source, data_owner, data_steward, uc_owner, classification,\n       IF(data_owner IS NULL, 'MISSING OWNER', IF(data_steward IS NULL, 'MISSING STEWARD', 'OK')) AS ownership_status\nFROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine'))\n"
+      ]
+    },
+    {
+      "name": "meta_kpi",
+      "displayName": "Metadata KPIs",
+      "queryLines": [
+        "SELECT (SELECT COUNT(*) FROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')))                                                     AS registered_tables,\n       (SELECT COUNT_IF(comment IS NULL OR comment = '') FROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')))                    AS tables_without_description,\n       (SELECT ROUND(100.0 * COUNT_IF(comment IS NOT NULL AND comment <> '') / COUNT(*), 1)\n          FROM workspace.information_schema.columns WHERE table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine'))                                 AS pct_columns_described,\n       (SELECT COUNT_IF(comment IS NULL OR comment = '')\n          FROM workspace.information_schema.columns WHERE table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine'))                                 AS columns_without_description,\n       (SELECT ROUND(100.0 * COUNT_IF(classification IS NOT NULL AND data_owner IS NOT NULL) / COUNT(*), 1)\n          FROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')))                                                                   AS pct_catalog_coverage\n"
+      ]
+    },
+    {
+      "name": "meta_missing",
+      "displayName": "Missing descriptions",
+      "queryLines": [
+        "SELECT table_schema AS schema_name, table_name, column_name, data_type\nFROM workspace.information_schema.columns WHERE table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine') AND (comment IS NULL OR comment = '')\n"
+      ]
+    },
+    {
+      "name": "meta_cov",
+      "displayName": "Column documentation coverage",
+      "queryLines": [
+        "SELECT table_schema AS schema_name, table_name, COUNT(*) AS columns,\n       COUNT_IF(comment IS NOT NULL AND comment <> '') AS documented,\n       ROUND(100.0 * COUNT_IF(comment IS NOT NULL AND comment <> '') / COUNT(*), 1) AS pct_documented\nFROM workspace.information_schema.columns WHERE table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine') GROUP BY table_schema, table_name\n"
+      ]
+    },
+    {
+      "name": "meta_changes",
+      "displayName": "Schema changes",
+      "queryLines": [
+        "SELECT detected_at, source_name, entity_id, change_type, field_name, expected_type, actual_type, details\nFROM workspace.met_audit.schema_change_log\n"
+      ]
+    },
+    {
+      "name": "meta_by",
+      "displayName": "Schema changes by type",
+      "queryLines": [
+        "SELECT source_name, change_type, COUNT(*) AS changes FROM workspace.met_audit.schema_change_log GROUP BY source_name, change_type\n"
+      ]
+    },
+    {
+      "name": "lin_declared",
+      "displayName": "Declared lineage",
+      "queryLines": [
+        "SELECT source_name, hop,\n       CASE hop WHEN 1 THEN 'Source API \u2192 Bronze' WHEN 2 THEN 'Bronze \u2192 Silver' ELSE 'Silver \u2192 Gold' END AS step,\n       from_node, to_node\nFROM (SELECT 'open_meteo_weather' AS source_name, 1 AS hop, 'https://api.open-meteo.com/v1/forecast' AS from_node, 'workspace.met_raw.weather_raw' AS to_node UNION ALL SELECT 'open_meteo_weather' AS source_name, 2 AS hop, 'workspace.met_raw.weather_raw' AS from_node, 'workspace.met_silver.weather_hourly' AS to_node UNION ALL SELECT 'open_meteo_weather' AS source_name, 3 AS hop, 'workspace.met_silver.weather_hourly' AS from_node, 'workspace.met_gold.weather_daily' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 1 AS hop, 'https://earthquake.usgs.gov/fdsnws/event/1/query' AS from_node, 'workspace.met_raw.earthquakes_raw' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 2 AS hop, 'workspace.met_raw.earthquakes_raw' AS from_node, 'workspace.met_silver.earthquake_events' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 3 AS hop, 'workspace.met_silver.earthquake_events' AS from_node, 'workspace.met_gold.earthquakes_daily' AS to_node)\n"
+      ]
+    },
+    {
+      "name": "lin_deps",
+      "displayName": "Upstream / downstream dependencies",
+      "queryLines": [
+        "SELECT dataset, COUNT_IF(direction = 'upstream') AS upstream, COUNT_IF(direction = 'downstream') AS downstream\nFROM (SELECT to_node AS dataset, 'upstream' AS direction FROM (SELECT 'open_meteo_weather' AS source_name, 1 AS hop, 'https://api.open-meteo.com/v1/forecast' AS from_node, 'workspace.met_raw.weather_raw' AS to_node UNION ALL SELECT 'open_meteo_weather' AS source_name, 2 AS hop, 'workspace.met_raw.weather_raw' AS from_node, 'workspace.met_silver.weather_hourly' AS to_node UNION ALL SELECT 'open_meteo_weather' AS source_name, 3 AS hop, 'workspace.met_silver.weather_hourly' AS from_node, 'workspace.met_gold.weather_daily' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 1 AS hop, 'https://earthquake.usgs.gov/fdsnws/event/1/query' AS from_node, 'workspace.met_raw.earthquakes_raw' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 2 AS hop, 'workspace.met_raw.earthquakes_raw' AS from_node, 'workspace.met_silver.earthquake_events' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 3 AS hop, 'workspace.met_silver.earthquake_events' AS from_node, 'workspace.met_gold.earthquakes_daily' AS to_node)\n      UNION ALL SELECT from_node, 'downstream' FROM (SELECT 'open_meteo_weather' AS source_name, 1 AS hop, 'https://api.open-meteo.com/v1/forecast' AS from_node, 'workspace.met_raw.weather_raw' AS to_node UNION ALL SELECT 'open_meteo_weather' AS source_name, 2 AS hop, 'workspace.met_raw.weather_raw' AS from_node, 'workspace.met_silver.weather_hourly' AS to_node UNION ALL SELECT 'open_meteo_weather' AS source_name, 3 AS hop, 'workspace.met_silver.weather_hourly' AS from_node, 'workspace.met_gold.weather_daily' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 1 AS hop, 'https://earthquake.usgs.gov/fdsnws/event/1/query' AS from_node, 'workspace.met_raw.earthquakes_raw' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 2 AS hop, 'workspace.met_raw.earthquakes_raw' AS from_node, 'workspace.met_silver.earthquake_events' AS to_node UNION ALL SELECT 'usgs_earthquakes' AS source_name, 3 AS hop, 'workspace.met_silver.earthquake_events' AS from_node, 'workspace.met_gold.earthquakes_daily' AS to_node))\nWHERE dataset LIKE 'workspace.%' GROUP BY dataset\n"
+      ]
+    },
+    {
+      "name": "lin_observed",
+      "displayName": "Lineage observed by Unity Catalog (30 days)",
+      "queryLines": [
+        "SELECT COALESCE(source_table_full_name, concat('(', COALESCE(entity_type, 'external'), ' write)')) AS source,\n       target_table_full_name AS target, entity_type, COUNT(*) AS events, MAX(event_time) AS last_seen\nFROM system.access.table_lineage\nWHERE event_date >= current_date() - INTERVAL 30 DAYS AND (target_table_full_name LIKE 'workspace.met_raw.%' OR target_table_full_name LIKE 'workspace.met_silver.%' OR target_table_full_name LIKE 'workspace.met_gold.%' OR target_table_full_name LIKE 'workspace.met_audit.%' OR target_table_full_name LIKE 'workspace.met_quarantine.%')\nGROUP BY ALL\n"
+      ]
+    },
+    {
+      "name": "sec_kpi",
+      "displayName": "Security KPIs (7 days)",
+      "queryLines": [
+        "SELECT (SELECT COUNT(*) FROM system.access.audit WHERE event_date >= current_date() - INTERVAL 7 DAYS AND service_name = 'unityCatalog' AND (request_params['full_name_arg'] LIKE 'workspace.met_raw.%' OR request_params['full_name_arg'] LIKE 'workspace.met_silver.%' OR request_params['full_name_arg'] LIKE 'workspace.met_gold.%' OR request_params['full_name_arg'] LIKE 'workspace.met_audit.%' OR request_params['full_name_arg'] LIKE 'workspace.met_quarantine.%'))                          AS access_events,\n       (SELECT COUNT(DISTINCT user_identity.email) FROM system.access.audit WHERE event_date >= current_date() - INTERVAL 7 DAYS AND service_name = 'unityCatalog' AND (request_params['full_name_arg'] LIKE 'workspace.met_raw.%' OR request_params['full_name_arg'] LIKE 'workspace.met_silver.%' OR request_params['full_name_arg'] LIKE 'workspace.met_gold.%' OR request_params['full_name_arg'] LIKE 'workspace.met_audit.%' OR request_params['full_name_arg'] LIKE 'workspace.met_quarantine.%')) AS principals,\n       (SELECT COUNT(*) FROM system.access.audit WHERE event_date >= current_date() - INTERVAL 7 DAYS\n          AND response.status_code IN (401, 403))                                                  AS unauthorized_attempts,\n       (SELECT COUNT(*) FROM system.access.audit WHERE event_date >= current_date() - INTERVAL 7 DAYS\n          AND response.status_code >= 400)                                                         AS failed_requests,\n       (SELECT COUNT(*) FROM workspace.information_schema.table_privileges WHERE table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine'))\n         + (SELECT COUNT(*) FROM workspace.information_schema.schema_privileges WHERE schema_name IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine'))              AS explicit_grants,\n       (SELECT COUNT(*) FROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')) WHERE classification IN ('confidential', 'restricted'))      AS sensitive_datasets\n"
+      ]
+    },
+    {
+      "name": "sec_users",
+      "displayName": "Principals accessing governed assets",
+      "queryLines": [
+        "SELECT user_identity.email AS principal, action_name, COUNT(*) AS events, MAX(event_time) AS last_seen\nFROM system.access.audit WHERE event_date >= current_date() - INTERVAL 7 DAYS AND service_name = 'unityCatalog' AND (request_params['full_name_arg'] LIKE 'workspace.met_raw.%' OR request_params['full_name_arg'] LIKE 'workspace.met_silver.%' OR request_params['full_name_arg'] LIKE 'workspace.met_gold.%' OR request_params['full_name_arg'] LIKE 'workspace.met_audit.%' OR request_params['full_name_arg'] LIKE 'workspace.met_quarantine.%') GROUP BY ALL\n"
+      ]
+    },
+    {
+      "name": "sec_failed",
+      "displayName": "Failed requests (workspace-wide, 7 days)",
+      "queryLines": [
+        "SELECT event_time, user_identity.email AS principal, service_name, action_name,\n       response.status_code AS status_code, left(response.error_message, 140) AS error\nFROM system.access.audit\nWHERE event_date >= current_date() - INTERVAL 7 DAYS AND response.status_code >= 400\nORDER BY event_time DESC LIMIT 50\n"
+      ]
+    },
+    {
+      "name": "sec_class",
+      "displayName": "Datasets by classification",
+      "queryLines": [
+        "SELECT schema_name, COALESCE(classification, 'unclassified') AS classification, COUNT(*) AS tables\nFROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')) GROUP BY ALL\n"
+      ]
+    },
+    {
+      "name": "sec_grants",
+      "displayName": "Explicit privileges",
+      "queryLines": [
+        "SELECT schema_name, 'schema' AS object_type, schema_name AS object_name, grantee, privilege_type, inherited_from\nFROM workspace.information_schema.schema_privileges WHERE schema_name IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')\nUNION ALL\nSELECT table_schema, 'table', concat(table_schema, '.', table_name), grantee, privilege_type, inherited_from\nFROM workspace.information_schema.table_privileges WHERE table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')\n"
+      ]
+    },
+    {
+      "name": "comp_kpi",
+      "displayName": "Compliance KPIs",
+      "queryLines": [
+        "SELECT (SELECT COUNT(*) FROM (\nSELECT schema_name, table_name, policy_check\nFROM (SELECT schema_name, table_name,\n             stack(5, 'missing data owner', data_owner IS NULL,\n                      'missing data steward', data_steward IS NULL,\n                      'missing classification', classification IS NULL,\n                      'missing table description', comment IS NULL OR comment = '',\n                      'missing retention policy', layer IN ('bronze', 'silver', 'gold') AND retention_days IS NULL)\n               AS (policy_check, violated)\n      FROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')))\nWHERE violated)) AS policy_violations,\n       (SELECT COUNT_IF(retention_status = 'VIOLATION') FROM (\nSELECT a.schema_name, a.table_name, a.oldest_date, datediff(current_date(), a.oldest_date) AS data_age_days,\n       CAST(t.tag_value AS INT) AS policy_days,\n       CASE WHEN t.tag_value IS NULL THEN 'NO POLICY'\n            WHEN datediff(current_date(), a.oldest_date) <= CAST(t.tag_value AS INT) THEN 'COMPLIANT'\n            ELSE 'VIOLATION' END AS retention_status\nFROM (SELECT 'met_raw' AS schema_name, 'weather_raw' AS table_name, MIN(ingestion_date) AS oldest_date FROM workspace.met_raw.weather_raw UNION ALL SELECT 'met_silver', 'weather_hourly', MIN(CAST(created_at AS DATE)) FROM workspace.met_silver.weather_hourly UNION ALL SELECT 'met_gold', 'weather_daily', MIN(CAST(created_at AS DATE)) FROM workspace.met_gold.weather_daily UNION ALL SELECT 'met_raw' AS schema_name, 'earthquakes_raw' AS table_name, MIN(ingestion_date) AS oldest_date FROM workspace.met_raw.earthquakes_raw UNION ALL SELECT 'met_silver', 'earthquake_events', MIN(CAST(created_at AS DATE)) FROM workspace.met_silver.earthquake_events UNION ALL SELECT 'met_gold', 'earthquakes_daily', MIN(CAST(created_at AS DATE)) FROM workspace.met_gold.earthquakes_daily) a\nLEFT JOIN workspace.information_schema.table_tags t ON t.schema_name = a.schema_name AND t.table_name = a.table_name\n                          AND t.tag_name = 'retention_days')) AS retention_violations,\n       (SELECT COUNT_IF(retention_status = 'NO POLICY') FROM (\nSELECT a.schema_name, a.table_name, a.oldest_date, datediff(current_date(), a.oldest_date) AS data_age_days,\n       CAST(t.tag_value AS INT) AS policy_days,\n       CASE WHEN t.tag_value IS NULL THEN 'NO POLICY'\n            WHEN datediff(current_date(), a.oldest_date) <= CAST(t.tag_value AS INT) THEN 'COMPLIANT'\n            ELSE 'VIOLATION' END AS retention_status\nFROM (SELECT 'met_raw' AS schema_name, 'weather_raw' AS table_name, MIN(ingestion_date) AS oldest_date FROM workspace.met_raw.weather_raw UNION ALL SELECT 'met_silver', 'weather_hourly', MIN(CAST(created_at AS DATE)) FROM workspace.met_silver.weather_hourly UNION ALL SELECT 'met_gold', 'weather_daily', MIN(CAST(created_at AS DATE)) FROM workspace.met_gold.weather_daily UNION ALL SELECT 'met_raw' AS schema_name, 'earthquakes_raw' AS table_name, MIN(ingestion_date) AS oldest_date FROM workspace.met_raw.earthquakes_raw UNION ALL SELECT 'met_silver', 'earthquake_events', MIN(CAST(created_at AS DATE)) FROM workspace.met_silver.earthquake_events UNION ALL SELECT 'met_gold', 'earthquakes_daily', MIN(CAST(created_at AS DATE)) FROM workspace.met_gold.earthquakes_daily) a\nLEFT JOIN workspace.information_schema.table_tags t ON t.schema_name = a.schema_name AND t.table_name = a.table_name\n                          AND t.tag_name = 'retention_days')) AS datasets_without_policy,\n       (SELECT ROUND(100.0 * COUNT_IF(classification IS NOT NULL) / COUNT(*), 1) FROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine'))) AS pct_classified\n"
+      ]
+    },
+    {
+      "name": "comp_ret",
+      "displayName": "Retention compliance",
+      "queryLines": [
+        "SELECT a.schema_name, a.table_name, a.oldest_date, datediff(current_date(), a.oldest_date) AS data_age_days,\n       CAST(t.tag_value AS INT) AS policy_days,\n       CASE WHEN t.tag_value IS NULL THEN 'NO POLICY'\n            WHEN datediff(current_date(), a.oldest_date) <= CAST(t.tag_value AS INT) THEN 'COMPLIANT'\n            ELSE 'VIOLATION' END AS retention_status\nFROM (SELECT 'met_raw' AS schema_name, 'weather_raw' AS table_name, MIN(ingestion_date) AS oldest_date FROM workspace.met_raw.weather_raw UNION ALL SELECT 'met_silver', 'weather_hourly', MIN(CAST(created_at AS DATE)) FROM workspace.met_silver.weather_hourly UNION ALL SELECT 'met_gold', 'weather_daily', MIN(CAST(created_at AS DATE)) FROM workspace.met_gold.weather_daily UNION ALL SELECT 'met_raw' AS schema_name, 'earthquakes_raw' AS table_name, MIN(ingestion_date) AS oldest_date FROM workspace.met_raw.earthquakes_raw UNION ALL SELECT 'met_silver', 'earthquake_events', MIN(CAST(created_at AS DATE)) FROM workspace.met_silver.earthquake_events UNION ALL SELECT 'met_gold', 'earthquakes_daily', MIN(CAST(created_at AS DATE)) FROM workspace.met_gold.earthquakes_daily) a\nLEFT JOIN workspace.information_schema.table_tags t ON t.schema_name = a.schema_name AND t.table_name = a.table_name\n                          AND t.tag_name = 'retention_days'\n"
+      ]
+    },
+    {
+      "name": "comp_viol",
+      "displayName": "Policy violations",
+      "queryLines": [
+        "SELECT schema_name, table_name, policy_check\nFROM (SELECT schema_name, table_name,\n             stack(5, 'missing data owner', data_owner IS NULL,\n                      'missing data steward', data_steward IS NULL,\n                      'missing classification', classification IS NULL,\n                      'missing table description', comment IS NULL OR comment = '',\n                      'missing retention policy', layer IN ('bronze', 'silver', 'gold') AND retention_days IS NULL)\n               AS (policy_check, violated)\n      FROM (SELECT t.table_schema AS schema_name, t.table_name, t.table_owner AS uc_owner, t.comment,\n       g.layer, g.source, g.classification, g.data_owner, g.data_steward, g.retention_days\nFROM workspace.information_schema.tables t\nLEFT JOIN (SELECT schema_name, table_name,\n                 MAX(IF(tag_name = 'layer', tag_value, NULL))           AS layer,\n                 MAX(IF(tag_name = 'source', tag_value, NULL))          AS source,\n                 MAX(IF(tag_name = 'classification', tag_value, NULL))  AS classification,\n                 MAX(IF(tag_name = 'data_owner', tag_value, NULL))      AS data_owner,\n                 MAX(IF(tag_name = 'data_steward', tag_value, NULL))    AS data_steward,\n                 MAX(IF(tag_name = 'retention_days', tag_value, NULL))  AS retention_days\n          FROM workspace.information_schema.table_tags GROUP BY schema_name, table_name) g ON g.schema_name = t.table_schema AND g.table_name = t.table_name\nWHERE t.table_schema IN ('met_raw', 'met_silver', 'met_gold', 'met_audit', 'met_quarantine')))\nWHERE violated\n"
+      ]
+    },
+    {
+      "name": "aud_kpi",
+      "displayName": "Audit KPIs (7 days)",
+      "queryLines": [
+        "SELECT (SELECT COUNT(*) FROM workspace.met_audit.run_log WHERE start_time >= current_timestamp() - INTERVAL 7 DAYS\n          AND status <> 'RUNNING')                                                          AS pipeline_runs,\n       (SELECT COUNT(*) FROM workspace.met_audit.run_log WHERE start_time >= current_timestamp() - INTERVAL 7 DAYS\n          AND status IN ('FAILED', 'PARTIAL_SUCCESS'))                                      AS failed_or_partial_runs,\n       (SELECT COUNT(DISTINCT run_id) FROM system.lakeflow.job_run_timeline\n         WHERE period_start_time >= current_timestamp() - INTERVAL 7 DAYS\n           AND result_state IN ('FAILED', 'ERROR', 'TIMED_OUT'))                            AS failed_job_runs,\n       (SELECT COUNT(*) FROM system.access.audit WHERE event_date >= current_date() - INTERVAL 7 DAYS AND service_name = 'unityCatalog' AND (request_params['full_name_arg'] LIKE 'workspace.met_raw.%' OR request_params['full_name_arg'] LIKE 'workspace.met_silver.%' OR request_params['full_name_arg'] LIKE 'workspace.met_gold.%' OR request_params['full_name_arg'] LIKE 'workspace.met_audit.%' OR request_params['full_name_arg'] LIKE 'workspace.met_quarantine.%')\n          AND (action_name LIKE 'update%' OR action_name LIKE 'create%' OR action_name LIKE 'delete%'))\n                                                                                            AS governed_changes\n"
+      ]
+    },
+    {
+      "name": "aud_runs",
+      "displayName": "Pipeline execution history",
+      "queryLines": [
+        "SELECT start_time, source_name, status, duration_seconds, job_success, job_failed, bronze_rows,\n       silver_rows_inserted, silver_rows_updated, quarantine_rows, test_mode, error_message\nFROM workspace.met_audit.run_log WHERE status <> 'RUNNING'\n"
+      ]
+    },
+    {
+      "name": "aud_changes",
+      "displayName": "Changes to governed assets",
+      "queryLines": [
+        "SELECT event_date, action_name, COUNT(*) AS events\nFROM system.access.audit\nWHERE event_date >= current_date() - INTERVAL 7 DAYS AND service_name = 'unityCatalog' AND (request_params['full_name_arg'] LIKE 'workspace.met_raw.%' OR request_params['full_name_arg'] LIKE 'workspace.met_silver.%' OR request_params['full_name_arg'] LIKE 'workspace.met_gold.%' OR request_params['full_name_arg'] LIKE 'workspace.met_audit.%' OR request_params['full_name_arg'] LIKE 'workspace.met_quarantine.%') AND (action_name LIKE 'update%' OR action_name LIKE 'create%' OR action_name LIKE 'delete%')\nGROUP BY event_date, action_name\n"
+      ]
+    },
+    {
+      "name": "aud_jobs",
+      "displayName": "Job runs by result (30 days)",
+      "queryLines": [
+        "SELECT result_state, COUNT(DISTINCT run_id) AS job_runs\nFROM system.lakeflow.job_run_timeline\nWHERE period_start_time >= current_timestamp() - INTERVAL 30 DAYS AND result_state IS NOT NULL\nGROUP BY result_state\n"
+      ]
+    },
+    {
+      "name": "aud_access",
+      "displayName": "Access log (7 days)",
+      "queryLines": [
+        "SELECT event_date, action_name, COUNT(*) AS events\nFROM system.access.audit WHERE event_date >= current_date() - INTERVAL 7 DAYS AND service_name = 'unityCatalog' AND (request_params['full_name_arg'] LIKE 'workspace.met_raw.%' OR request_params['full_name_arg'] LIKE 'workspace.met_silver.%' OR request_params['full_name_arg'] LIKE 'workspace.met_gold.%' OR request_params['full_name_arg'] LIKE 'workspace.met_audit.%' OR request_params['full_name_arg'] LIKE 'workspace.met_quarantine.%') GROUP BY event_date, action_name\n"
+      ]
+    },
+    {
+      "name": "dq_kpi",
+      "displayName": "Data quality KPIs (30 days)",
+      "queryLines": [
+        "SELECT COALESCE(ROUND(100.0 * SUM(r.silver_valid_rows) / NULLIF(SUM(r.source_rows), 0), 2), 100) AS quality_score,\n       COALESCE(ROUND(100.0 * SUM(r.quarantine_rows) / NULLIF(SUM(r.source_rows), 0), 2), 0)     AS fail_pct,\n       COALESCE(SUM(r.source_rows), 0)                                                          AS source_rows,\n       COALESCE(SUM(r.quarantine_rows), 0)                                                      AS rejected_records,\n       (SELECT COUNT_IF(exists(dq_errors, e -> e LIKE 'NULL%')) FROM workspace.met_quarantine.data_quarantine\n         WHERE quarantined_at >= current_timestamp() - INTERVAL 30 DAYS)                         AS null_value_rows,\n       (SELECT COUNT_IF(exists(dq_errors, e -> e LIKE 'DUPLICATE%')) FROM workspace.met_quarantine.data_quarantine\n         WHERE quarantined_at >= current_timestamp() - INTERVAL 30 DAYS)                         AS duplicate_rows,\n       (SELECT COUNT_IF(NOT exists(dq_errors, e -> e LIKE 'NULL%' OR e LIKE 'DUPLICATE%'))\n          FROM workspace.met_quarantine.data_quarantine WHERE quarantined_at >= current_timestamp() - INTERVAL 30 DAYS) AS invalid_rows\nFROM workspace.met_audit.run_log r\nWHERE r.start_time >= current_timestamp() - INTERVAL 30 DAYS AND r.status <> 'RUNNING'\n"
+      ]
+    },
+    {
+      "name": "dq_trend",
+      "displayName": "Quality score per run",
+      "queryLines": [
+        "SELECT source_name, start_time,\n       COALESCE(ROUND(100.0 * silver_valid_rows / NULLIF(source_rows, 0), 2), 100) AS quality_score\nFROM workspace.met_audit.run_log WHERE status <> 'RUNNING'\n"
+      ]
+    },
+    {
+      "name": "dq_source",
+      "displayName": "Quality by source (30 days)",
+      "queryLines": [
+        "SELECT source_name, SUM(source_rows) AS source_rows, SUM(silver_valid_rows) AS valid_rows,\n       SUM(quarantine_rows) AS rejected_rows,\n       ROUND(100.0 * SUM(silver_valid_rows) / NULLIF(SUM(source_rows), 0), 2) AS pass_pct,\n       ROUND(100.0 * SUM(quarantine_rows) / NULLIF(SUM(source_rows), 0), 2) AS fail_pct\nFROM workspace.met_audit.run_log WHERE start_time >= current_timestamp() - INTERVAL 30 DAYS AND status <> 'RUNNING'\nGROUP BY source_name\n"
+      ]
+    },
+    {
+      "name": "fr_kpi",
+      "displayName": "Freshness KPIs",
+      "queryLines": [
+        "WITH last_ok AS (SELECT source_name, MAX(start_time) AS last_ok_time FROM workspace.met_audit.run_log\n                 WHERE status IN ('SUCCESS', 'PARTIAL_SUCCESS') GROUP BY source_name)\nSELECT COALESCE(ROUND(MAX(timestampdiff(MINUTE, last_ok_time, current_timestamp())) / 60.0, 1), 0)\n         AS hours_since_last_success_worst,\n       COUNT_IF(timestampdiff(HOUR, last_ok_time, current_timestamp()) > 24) AS stale_sources,\n       (SELECT COUNT(*) FROM workspace.met_audit.run_log WHERE start_time >= current_timestamp() - INTERVAL 7 DAYS\n          AND status <> 'RUNNING' AND (status = 'FAILED' OR duration_seconds > 300)) AS sla_breaches_7d\nFROM last_ok\n"
+      ]
+    },
+    {
+      "name": "fr_datasets",
+      "displayName": "Dataset freshness",
+      "queryLines": [
+        "SELECT ds.source_name, ds.dataset, l.last_successful_load,\n       ROUND(timestampdiff(MINUTE, l.last_successful_load, current_timestamp()) / 60.0, 1) AS hours_since_load,\n       IF(timestampdiff(HOUR, l.last_successful_load, current_timestamp()) <= 24, 'FRESH', 'STALE')\n         AS freshness_status\nFROM (SELECT 'open_meteo_weather' AS source_name, 'workspace.met_raw.weather_raw' AS dataset UNION ALL SELECT 'open_meteo_weather' AS source_name, 'workspace.met_silver.weather_hourly' AS dataset UNION ALL SELECT 'open_meteo_weather' AS source_name, 'workspace.met_gold.weather_daily' AS dataset UNION ALL SELECT 'usgs_earthquakes' AS source_name, 'workspace.met_raw.earthquakes_raw' AS dataset UNION ALL SELECT 'usgs_earthquakes' AS source_name, 'workspace.met_silver.earthquake_events' AS dataset UNION ALL SELECT 'usgs_earthquakes' AS source_name, 'workspace.met_gold.earthquakes_daily' AS dataset) ds\nLEFT JOIN (SELECT source_name, MAX(start_time) AS last_successful_load FROM workspace.met_audit.run_log\n           WHERE status IN ('SUCCESS', 'PARTIAL_SUCCESS') GROUP BY source_name) l USING (source_name)\n"
+      ]
+    },
+    {
+      "name": "fr_entities",
+      "displayName": "Last successful ingestion per entity",
+      "queryLines": [
+        "SELECT r.source_name, d.entity_name, MAX(d.end_time) AS last_successful_ingestion,\n       ROUND(timestampdiff(MINUTE, MAX(d.end_time), current_timestamp()) / 60.0, 1) AS hours_since_ingestion,\n       IF(timestampdiff(HOUR, MAX(d.end_time), current_timestamp()) <= 24, 'OK', 'STALE') AS freshness_status\nFROM workspace.met_audit.run_log_dtl d JOIN workspace.met_audit.run_log r USING (run_id)\nWHERE d.status = 'SUCCESS' GROUP BY r.source_name, d.entity_name\n"
+      ]
+    },
+    {
+      "name": "fr_sla",
+      "displayName": "SLA breaches",
+      "queryLines": [
+        "SELECT start_time, source_name, status, duration_seconds, 300 AS target_seconds, error_message\nFROM workspace.met_audit.run_log\nWHERE status <> 'RUNNING' AND (status = 'FAILED' OR duration_seconds > 300)\n"
+      ]
+    },
+    {
+      "name": "qm_kpi",
+      "displayName": "Quarantine KPIs",
+      "queryLines": [
+        "SELECT COUNT(*) AS rejected_records,\n       COUNT_IF(q.rejection_level = 'ROW') AS row_level,\n       COUNT_IF(q.rejection_level = 'PAYLOAD') AS payload_level,\n       COUNT(DISTINCT q.run_id) AS affected_runs,\n       COUNT_IF(rp.replayed_run_id IS NULL) AS pending_reprocessing\nFROM workspace.met_quarantine.data_quarantine q LEFT JOIN (SELECT DISTINCT get_json_object(parameters, '$.replay_run_id') AS replayed_run_id\n                    FROM workspace.met_audit.run_log_dtl WHERE get_json_object(parameters, '$.replay_run_id') IS NOT NULL) rp ON rp.replayed_run_id = q.run_id\n"
+      ]
+    },
+    {
+      "name": "qm_reasons",
+      "displayName": "Rejection reasons",
+      "queryLines": [
+        "SELECT source_name, reason, rejection_level, COUNT(*) AS rows_quarantined\nFROM workspace.met_quarantine.data_quarantine LATERAL VIEW explode(dq_errors) x AS reason GROUP BY source_name, reason, rejection_level\n"
+      ]
+    },
+    {
+      "name": "qm_recent",
+      "displayName": "Quarantined records",
+      "queryLines": [
+        "SELECT q.quarantined_at, q.source_name, q.entity_id, q.rejection_level, array_join(q.dq_errors, ', ') AS reasons,\n       q.error_details, CAST(q.raw_values AS STRING) AS raw_values,\n       IF(rp.replayed_run_id IS NULL, 'PENDING', 'REPLAYED') AS reprocessing_status\nFROM workspace.met_quarantine.data_quarantine q LEFT JOIN (SELECT DISTINCT get_json_object(parameters, '$.replay_run_id') AS replayed_run_id\n                    FROM workspace.met_audit.run_log_dtl WHERE get_json_object(parameters, '$.replay_run_id') IS NOT NULL) rp ON rp.replayed_run_id = q.run_id\nORDER BY q.quarantined_at DESC LIMIT 100\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "1f74dba7",
+      "displayName": "Ownership, metadata & lineage",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "d07dd258",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Data governance\n",
+                "Ownership, metadata and lineage for the `met_*` schemas (real data; `_edge` demo copies are excluded). Tags and descriptions are applied from the source YAMLs by the setup task."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "8f33b8c8",
+            "queries": [
+              {
+                "name": "filter_a09056a7",
+                "query": {
+                  "datasetName": "own_tbl",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_cd2e695a",
+                "query": {
+                  "datasetName": "meta_missing",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_aed237c9",
+                "query": {
+                  "datasetName": "meta_cov",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "schema_name",
+                    "displayName": "schema_name",
+                    "queryName": "filter_a09056a7"
+                  },
+                  {
+                    "fieldName": "schema_name",
+                    "displayName": "schema_name",
+                    "queryName": "filter_cd2e695a"
+                  },
+                  {
+                    "fieldName": "schema_name",
+                    "displayName": "schema_name",
+                    "queryName": "filter_aed237c9"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Schema"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "79dd385e",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 1 \u00b7 Data ownership"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "5bd8318a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "own_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`datasets`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Registered datasets"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Registered datasets"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "d6fc3b1a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "own_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`without_owner_or_steward`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Without owner or steward"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Without owner or steward"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 4,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "47dd7107",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "own_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`distinct_owners`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Distinct owners"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Distinct owners"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 4,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "f2354bee",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "own_tbl",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    },
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "layer",
+                      "expression": "`layer`"
+                    },
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "data_owner",
+                      "expression": "`data_owner`"
+                    },
+                    {
+                      "name": "data_steward",
+                      "expression": "`data_steward`"
+                    },
+                    {
+                      "name": "uc_owner",
+                      "expression": "`uc_owner`"
+                    },
+                    {
+                      "name": "classification",
+                      "expression": "`classification`"
+                    },
+                    {
+                      "name": "ownership_status",
+                      "expression": "`ownership_status`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "schema_name",
+                    "displayName": "schema_name"
+                  },
+                  {
+                    "fieldName": "table_name",
+                    "displayName": "table_name"
+                  },
+                  {
+                    "fieldName": "layer",
+                    "displayName": "layer"
+                  },
+                  {
+                    "fieldName": "source",
+                    "displayName": "source"
+                  },
+                  {
+                    "fieldName": "data_owner",
+                    "displayName": "data_owner"
+                  },
+                  {
+                    "fieldName": "data_steward",
+                    "displayName": "data_steward"
+                  },
+                  {
+                    "fieldName": "uc_owner",
+                    "displayName": "uc_owner"
+                  },
+                  {
+                    "fieldName": "classification",
+                    "displayName": "classification"
+                  },
+                  {
+                    "fieldName": "ownership_status",
+                    "displayName": "ownership_status"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Dataset ownership"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "60405973",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 2 \u00b7 Metadata management"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "3fe94263",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`registered_tables`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Registered tables"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Registered tables"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "b711841b",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`pct_columns_described`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "% columns described"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "% columns described"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 13,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "9ab26984",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`columns_without_description`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Columns missing description"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Columns missing description"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 13,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "95f656d9",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`tables_without_description`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Tables missing description"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tables missing description"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 13,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "6a6d3bef",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`pct_catalog_coverage`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "% catalog coverage"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "% catalog coverage"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 13,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "8533b2fe",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_cov",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    },
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "columns",
+                      "expression": "`columns`"
+                    },
+                    {
+                      "name": "documented",
+                      "expression": "`documented`"
+                    },
+                    {
+                      "name": "pct_documented",
+                      "expression": "`pct_documented`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "schema_name",
+                    "displayName": "schema_name"
+                  },
+                  {
+                    "fieldName": "table_name",
+                    "displayName": "table_name"
+                  },
+                  {
+                    "fieldName": "columns",
+                    "displayName": "columns"
+                  },
+                  {
+                    "fieldName": "documented",
+                    "displayName": "documented"
+                  },
+                  {
+                    "fieldName": "pct_documented",
+                    "displayName": "pct_documented"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Column documentation coverage"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "f97d46ad",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_missing",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    },
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "column_name",
+                      "expression": "`column_name`"
+                    },
+                    {
+                      "name": "data_type",
+                      "expression": "`data_type`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "schema_name",
+                    "displayName": "schema_name"
+                  },
+                  {
+                    "fieldName": "table_name",
+                    "displayName": "table_name"
+                  },
+                  {
+                    "fieldName": "column_name",
+                    "displayName": "column_name"
+                  },
+                  {
+                    "fieldName": "data_type",
+                    "displayName": "data_type"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Columns missing a description"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 15,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "dd1f6c1e",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_by",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "change_type",
+                      "expression": "`change_type`"
+                    },
+                    {
+                      "name": "changes",
+                      "expression": "`changes`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "change_type",
+                  "displayName": "Change",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Change"
+                  }
+                },
+                "y": {
+                  "fieldName": "changes",
+                  "displayName": "changes",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "changes"
+                  }
+                },
+                "color": {
+                  "fieldName": "source_name",
+                  "displayName": "source_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Schema changes by type"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "21fcf8ee",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "meta_changes",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "detected_at",
+                      "expression": "`detected_at`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "entity_id",
+                      "expression": "`entity_id`"
+                    },
+                    {
+                      "name": "change_type",
+                      "expression": "`change_type`"
+                    },
+                    {
+                      "name": "field_name",
+                      "expression": "`field_name`"
+                    },
+                    {
+                      "name": "expected_type",
+                      "expression": "`expected_type`"
+                    },
+                    {
+                      "name": "actual_type",
+                      "expression": "`actual_type`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "detected_at",
+                    "displayName": "detected_at"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "entity_id",
+                    "displayName": "entity_id"
+                  },
+                  {
+                    "fieldName": "change_type",
+                    "displayName": "change_type"
+                  },
+                  {
+                    "fieldName": "field_name",
+                    "displayName": "field_name"
+                  },
+                  {
+                    "fieldName": "expected_type",
+                    "displayName": "expected_type"
+                  },
+                  {
+                    "fieldName": "actual_type",
+                    "displayName": "actual_type"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Schema change log"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 21,
+            "width": 8,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "65fd7540",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 3 \u00b7 Data lineage"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 26,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "289044d8",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Source API \u2192 Bronze \u2192 Silver \u2192 Gold is **declared** from the source YAMLs: the raw \u2192 silver hop is a Python parsing step, which Unity Catalog lineage cannot see. Silver \u2192 Gold and job writes are **observed**."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 27,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "f5015265",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "lin_declared",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "step",
+                      "expression": "`step`"
+                    },
+                    {
+                      "name": "from_node",
+                      "expression": "`from_node`"
+                    },
+                    {
+                      "name": "to_node",
+                      "expression": "`to_node`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "step",
+                    "displayName": "step"
+                  },
+                  {
+                    "fieldName": "from_node",
+                    "displayName": "from_node"
+                  },
+                  {
+                    "fieldName": "to_node",
+                    "displayName": "to_node"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Declared lineage chain"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 29,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "19b358a4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "lin_deps",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "dataset",
+                      "expression": "`dataset`"
+                    },
+                    {
+                      "name": "upstream",
+                      "expression": "`upstream`"
+                    },
+                    {
+                      "name": "downstream",
+                      "expression": "`downstream`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "dataset",
+                    "displayName": "dataset"
+                  },
+                  {
+                    "fieldName": "upstream",
+                    "displayName": "upstream"
+                  },
+                  {
+                    "fieldName": "downstream",
+                    "displayName": "downstream"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Upstream / downstream dependencies"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 34,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "a99be9ed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "lin_observed",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "target",
+                      "expression": "`target`"
+                    },
+                    {
+                      "name": "entity_type",
+                      "expression": "`entity_type`"
+                    },
+                    {
+                      "name": "events",
+                      "expression": "`events`"
+                    },
+                    {
+                      "name": "last_seen",
+                      "expression": "`last_seen`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source",
+                    "displayName": "source"
+                  },
+                  {
+                    "fieldName": "target",
+                    "displayName": "target"
+                  },
+                  {
+                    "fieldName": "entity_type",
+                    "displayName": "entity_type"
+                  },
+                  {
+                    "fieldName": "events",
+                    "displayName": "events"
+                  },
+                  {
+                    "fieldName": "last_seen",
+                    "displayName": "last_seen"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Observed in Unity Catalog (30 days)"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 34,
+            "width": 6,
+            "height": 5
+          }
+        }
+      ]
+    },
+    {
+      "name": "bb08099d",
+      "displayName": "Security, compliance & audit",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "44c9f2d4",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Security, compliance & audit\n",
+                "Access from `system.access.audit`, policy checks from Unity Catalog tags and descriptions, execution history from `met_audit` and Databricks job tables."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "7628dab9",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 4 \u00b7 Security & access"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "7d622913",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`access_events`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Access events (7d)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Access events (7d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "82301f82",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`principals`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Principals"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Principals"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ab17240a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`unauthorized_attempts`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Unauthorized (401/403)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Unauthorized (401/403)"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "1559ace7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`failed_requests`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Failed requests"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Failed requests"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "34b92ec7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`explicit_grants`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Explicit grants"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Explicit grants"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "52e6d07f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`sensitive_datasets`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Sensitive datasets"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Sensitive datasets"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "4511d00a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_users",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "principal",
+                      "expression": "`principal`"
+                    },
+                    {
+                      "name": "action_name",
+                      "expression": "`action_name`"
+                    },
+                    {
+                      "name": "events",
+                      "expression": "`events`"
+                    },
+                    {
+                      "name": "last_seen",
+                      "expression": "`last_seen`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "principal",
+                    "displayName": "principal"
+                  },
+                  {
+                    "fieldName": "action_name",
+                    "displayName": "action_name"
+                  },
+                  {
+                    "fieldName": "events",
+                    "displayName": "events"
+                  },
+                  {
+                    "fieldName": "last_seen",
+                    "displayName": "last_seen"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Who accessed governed assets (7 days)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "6dd71098",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_class",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    },
+                    {
+                      "name": "tables",
+                      "expression": "`tables`"
+                    },
+                    {
+                      "name": "classification",
+                      "expression": "`classification`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "schema_name",
+                  "displayName": "Schema",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Schema"
+                  }
+                },
+                "y": {
+                  "fieldName": "tables",
+                  "displayName": "tables",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "tables"
+                  }
+                },
+                "color": {
+                  "fieldName": "classification",
+                  "displayName": "classification",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Datasets by classification"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "d3ddaecc",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_failed",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "event_time",
+                      "expression": "`event_time`"
+                    },
+                    {
+                      "name": "principal",
+                      "expression": "`principal`"
+                    },
+                    {
+                      "name": "service_name",
+                      "expression": "`service_name`"
+                    },
+                    {
+                      "name": "action_name",
+                      "expression": "`action_name`"
+                    },
+                    {
+                      "name": "status_code",
+                      "expression": "`status_code`"
+                    },
+                    {
+                      "name": "error",
+                      "expression": "`error`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "event_time",
+                    "displayName": "event_time"
+                  },
+                  {
+                    "fieldName": "principal",
+                    "displayName": "principal"
+                  },
+                  {
+                    "fieldName": "service_name",
+                    "displayName": "service_name"
+                  },
+                  {
+                    "fieldName": "action_name",
+                    "displayName": "action_name"
+                  },
+                  {
+                    "fieldName": "status_code",
+                    "displayName": "status_code"
+                  },
+                  {
+                    "fieldName": "error",
+                    "displayName": "error"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Failed requests, workspace-wide (7 days)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 8,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "9f1776d8",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sec_grants",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "object_type",
+                      "expression": "`object_type`"
+                    },
+                    {
+                      "name": "object_name",
+                      "expression": "`object_name`"
+                    },
+                    {
+                      "name": "grantee",
+                      "expression": "`grantee`"
+                    },
+                    {
+                      "name": "privilege_type",
+                      "expression": "`privilege_type`"
+                    },
+                    {
+                      "name": "inherited_from",
+                      "expression": "`inherited_from`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "object_type",
+                    "displayName": "object_type"
+                  },
+                  {
+                    "fieldName": "object_name",
+                    "displayName": "object_name"
+                  },
+                  {
+                    "fieldName": "grantee",
+                    "displayName": "grantee"
+                  },
+                  {
+                    "fieldName": "privilege_type",
+                    "displayName": "privilege_type"
+                  },
+                  {
+                    "fieldName": "inherited_from",
+                    "displayName": "inherited_from"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Explicit privileges on governed assets"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 11,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "4dcad7bd",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 5 \u00b7 Compliance"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 17,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "bf71d84c",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "comp_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`policy_violations`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Policy violations"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Policy violations"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "8ef86c8d",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "comp_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`retention_violations`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Retention violations"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Retention violations"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 18,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "eeecc896",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "comp_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`datasets_without_policy`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Datasets without retention policy"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Datasets without retention policy"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 18,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "6b2bf9ba",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "comp_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`pct_classified`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "% classified"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "% classified"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 18,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "526315d6",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "comp_ret",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    },
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "oldest_date",
+                      "expression": "`oldest_date`"
+                    },
+                    {
+                      "name": "data_age_days",
+                      "expression": "`data_age_days`"
+                    },
+                    {
+                      "name": "policy_days",
+                      "expression": "`policy_days`"
+                    },
+                    {
+                      "name": "retention_status",
+                      "expression": "`retention_status`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "schema_name",
+                    "displayName": "schema_name"
+                  },
+                  {
+                    "fieldName": "table_name",
+                    "displayName": "table_name"
+                  },
+                  {
+                    "fieldName": "oldest_date",
+                    "displayName": "oldest_date"
+                  },
+                  {
+                    "fieldName": "data_age_days",
+                    "displayName": "data_age_days"
+                  },
+                  {
+                    "fieldName": "policy_days",
+                    "displayName": "policy_days"
+                  },
+                  {
+                    "fieldName": "retention_status",
+                    "displayName": "retention_status"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Retention policy compliance (data age vs policy)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "5c718290",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "comp_viol",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "schema_name",
+                      "expression": "`schema_name`"
+                    },
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "policy_check",
+                      "expression": "`policy_check`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "schema_name",
+                    "displayName": "schema_name"
+                  },
+                  {
+                    "fieldName": "table_name",
+                    "displayName": "table_name"
+                  },
+                  {
+                    "fieldName": "policy_check",
+                    "displayName": "policy_check"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Policy violations"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 20,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "6614dc05",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 6 \u00b7 Audit & monitoring"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 26,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "0f73ac5d",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aud_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`pipeline_runs`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Pipeline runs (7d)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pipeline runs (7d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 27,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "1681f390",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aud_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`failed_or_partial_runs`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Failed / partial runs"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Failed / partial runs"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 27,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "43285e9f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aud_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`failed_job_runs`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Failed job runs"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Failed job runs"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 27,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "f68760b5",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aud_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`governed_changes`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Changes to governed assets"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Changes to governed assets"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 27,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "67732dc5",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aud_runs",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "duration_seconds",
+                      "expression": "`duration_seconds`"
+                    },
+                    {
+                      "name": "job_success",
+                      "expression": "`job_success`"
+                    },
+                    {
+                      "name": "job_failed",
+                      "expression": "`job_failed`"
+                    },
+                    {
+                      "name": "quarantine_rows",
+                      "expression": "`quarantine_rows`"
+                    },
+                    {
+                      "name": "test_mode",
+                      "expression": "`test_mode`"
+                    },
+                    {
+                      "name": "error_message",
+                      "expression": "`error_message`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "start_time"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "status"
+                  },
+                  {
+                    "fieldName": "duration_seconds",
+                    "displayName": "duration_seconds"
+                  },
+                  {
+                    "fieldName": "job_success",
+                    "displayName": "job_success"
+                  },
+                  {
+                    "fieldName": "job_failed",
+                    "displayName": "job_failed"
+                  },
+                  {
+                    "fieldName": "quarantine_rows",
+                    "displayName": "quarantine_rows"
+                  },
+                  {
+                    "fieldName": "test_mode",
+                    "displayName": "test_mode"
+                  },
+                  {
+                    "fieldName": "error_message",
+                    "displayName": "error_message"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pipeline execution history"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 29,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "5775fdd4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aud_changes",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "event_date",
+                      "expression": "`event_date`"
+                    },
+                    {
+                      "name": "events",
+                      "expression": "`events`"
+                    },
+                    {
+                      "name": "action_name",
+                      "expression": "`action_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_date",
+                  "displayName": "Date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Date"
+                  }
+                },
+                "y": {
+                  "fieldName": "events",
+                  "displayName": "events",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "events"
+                  }
+                },
+                "color": {
+                  "fieldName": "action_name",
+                  "displayName": "action_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Changes to governed assets per day"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 35,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "b329af60",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aud_jobs",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "result_state",
+                      "expression": "`result_state`"
+                    },
+                    {
+                      "name": "job_runs",
+                      "expression": "`job_runs`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "result_state",
+                  "displayName": "Result",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Result"
+                  }
+                },
+                "y": {
+                  "fieldName": "job_runs",
+                  "displayName": "runs",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "runs"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Job runs by result (30 days)"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 35,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "514394db",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "aud_access",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "event_date",
+                      "expression": "`event_date`"
+                    },
+                    {
+                      "name": "events",
+                      "expression": "`events`"
+                    },
+                    {
+                      "name": "action_name",
+                      "expression": "`action_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "event_date",
+                  "displayName": "Date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Date"
+                  }
+                },
+                "y": {
+                  "fieldName": "events",
+                  "displayName": "events",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "events"
+                  }
+                },
+                "color": {
+                  "fieldName": "action_name",
+                  "displayName": "action_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Access log per day (governed assets)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 40,
+            "width": 12,
+            "height": 5
+          }
+        }
+      ]
+    },
+    {
+      "name": "2af59a65",
+      "displayName": "Data quality, freshness & quarantine",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "8cc130df",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Data health\n",
+                "Quality, freshness and rejected records from `met_audit` and `met_quarantine`. Freshness SLA: a successful load within **24 h**; run SLA: **300 s**, not FAILED."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "14b2153f",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 7 \u00b7 Data quality"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "1c84dab6",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`quality_score`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Quality score % (30d)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quality score % (30d)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "e370176c",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`fail_pct`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Validation fail %"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Validation fail %"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "74a0a915",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`null_value_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Null values"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Null values"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "315e8a99",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`duplicate_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Duplicates"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Duplicates"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "493a7680",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`invalid_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Invalid records"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Invalid records"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "46418165",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`source_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Records checked"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Records checked"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 3,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "49164992",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_trend",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "quality_score",
+                      "expression": "`quality_score`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "start_time",
+                  "displayName": "Run start (UTC)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Run start (UTC)"
+                  }
+                },
+                "y": {
+                  "fieldName": "quality_score",
+                  "displayName": "% valid",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "% valid"
+                  }
+                },
+                "color": {
+                  "fieldName": "source_name",
+                  "displayName": "source_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quality score per run (%)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 8,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "25c732f8",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq_source",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "source_rows",
+                      "expression": "`source_rows`"
+                    },
+                    {
+                      "name": "valid_rows",
+                      "expression": "`valid_rows`"
+                    },
+                    {
+                      "name": "rejected_rows",
+                      "expression": "`rejected_rows`"
+                    },
+                    {
+                      "name": "pass_pct",
+                      "expression": "`pass_pct`"
+                    },
+                    {
+                      "name": "fail_pct",
+                      "expression": "`fail_pct`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "source_rows",
+                    "displayName": "source_rows"
+                  },
+                  {
+                    "fieldName": "valid_rows",
+                    "displayName": "valid_rows"
+                  },
+                  {
+                    "fieldName": "rejected_rows",
+                    "displayName": "rejected_rows"
+                  },
+                  {
+                    "fieldName": "pass_pct",
+                    "displayName": "pass_pct"
+                  },
+                  {
+                    "fieldName": "fail_pct",
+                    "displayName": "fail_pct"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Validation pass / fail by source"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 5,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "1841ae08",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 8 \u00b7 Data freshness"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "11b54b97",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fr_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`hours_since_last_success_worst`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Hours since last success (worst source)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Hours since last success (worst source)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "39e8a5c1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fr_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`stale_sources`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Stale sources"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Stale sources"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 11,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "e57fa5d0",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fr_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`sla_breaches_7d`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "SLA breaches (7d)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "SLA breaches (7d)"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 11,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "66b7d807",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fr_datasets",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "dataset",
+                      "expression": "`dataset`"
+                    },
+                    {
+                      "name": "last_successful_load",
+                      "expression": "`last_successful_load`"
+                    },
+                    {
+                      "name": "hours_since_load",
+                      "expression": "`hours_since_load`"
+                    },
+                    {
+                      "name": "freshness_status",
+                      "expression": "`freshness_status`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "dataset",
+                    "displayName": "dataset"
+                  },
+                  {
+                    "fieldName": "last_successful_load",
+                    "displayName": "last_successful_load"
+                  },
+                  {
+                    "fieldName": "hours_since_load",
+                    "displayName": "hours_since_load"
+                  },
+                  {
+                    "fieldName": "freshness_status",
+                    "displayName": "freshness_status"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Dataset freshness (stale datasets flagged)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "4dafb6dd",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fr_entities",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "entity_name",
+                      "expression": "`entity_name`"
+                    },
+                    {
+                      "name": "last_successful_ingestion",
+                      "expression": "`last_successful_ingestion`"
+                    },
+                    {
+                      "name": "hours_since_ingestion",
+                      "expression": "`hours_since_ingestion`"
+                    },
+                    {
+                      "name": "freshness_status",
+                      "expression": "`freshness_status`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "entity_name",
+                    "displayName": "entity_name"
+                  },
+                  {
+                    "fieldName": "last_successful_ingestion",
+                    "displayName": "last_successful_ingestion"
+                  },
+                  {
+                    "fieldName": "hours_since_ingestion",
+                    "displayName": "hours_since_ingestion"
+                  },
+                  {
+                    "fieldName": "freshness_status",
+                    "displayName": "freshness_status"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Last successful ingestion per entity"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "c9c1391b",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fr_sla",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "duration_seconds",
+                      "expression": "`duration_seconds`"
+                    },
+                    {
+                      "name": "target_seconds",
+                      "expression": "`target_seconds`"
+                    },
+                    {
+                      "name": "error_message",
+                      "expression": "`error_message`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "start_time"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "status"
+                  },
+                  {
+                    "fieldName": "duration_seconds",
+                    "displayName": "duration_seconds"
+                  },
+                  {
+                    "fieldName": "target_seconds",
+                    "displayName": "target_seconds"
+                  },
+                  {
+                    "fieldName": "error_message",
+                    "displayName": "error_message"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "SLA breaches"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 18,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "64bb2ab0",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 9 \u00b7 Quarantine management"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 24,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "1fd085c4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "qm_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`rejected_records`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Rejected records"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rejected records"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "dda6eca8",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "qm_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`row_level`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Row-level"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Row-level"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 25,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "b8e18f96",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "qm_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`payload_level`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Payload-level"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Payload-level"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 25,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "d430acf5",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "qm_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`affected_runs`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Affected runs"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Affected runs"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 25,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "6282c3c1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "qm_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`pending_reprocessing`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Pending reprocessing"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pending reprocessing"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 25,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "53aef10a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "qm_reasons",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "reason",
+                      "expression": "`reason`"
+                    },
+                    {
+                      "name": "rows_quarantined",
+                      "expression": "`rows_quarantined`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "reason",
+                  "displayName": "Reason",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Reason"
+                  }
+                },
+                "y": {
+                  "fieldName": "rows_quarantined",
+                  "displayName": "rows",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "rows"
+                  }
+                },
+                "color": {
+                  "fieldName": "source_name",
+                  "displayName": "source_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rejection reasons"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 27,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "c70adab0",
+            "multilineTextboxSpec": {
+              "lines": [
+                "**Pending reprocessing** = quarantined rows whose run has not been replayed with `replay_run_id`. There is no other reprocessing workflow, so a row stays PENDING until a replay references its run."
+              ]
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 27,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "e4f09d43",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "qm_recent",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "quarantined_at",
+                      "expression": "`quarantined_at`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "entity_id",
+                      "expression": "`entity_id`"
+                    },
+                    {
+                      "name": "rejection_level",
+                      "expression": "`rejection_level`"
+                    },
+                    {
+                      "name": "reasons",
+                      "expression": "`reasons`"
+                    },
+                    {
+                      "name": "error_details",
+                      "expression": "`error_details`"
+                    },
+                    {
+                      "name": "raw_values",
+                      "expression": "`raw_values`"
+                    },
+                    {
+                      "name": "reprocessing_status",
+                      "expression": "`reprocessing_status`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "quarantined_at",
+                    "displayName": "quarantined_at"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "entity_id",
+                    "displayName": "entity_id"
+                  },
+                  {
+                    "fieldName": "rejection_level",
+                    "displayName": "rejection_level"
+                  },
+                  {
+                    "fieldName": "reasons",
+                    "displayName": "reasons"
+                  },
+                  {
+                    "fieldName": "error_details",
+                    "displayName": "error_details"
+                  },
+                  {
+                    "fieldName": "raw_values",
+                    "displayName": "raw_values"
+                  },
+                  {
+                    "fieldName": "reprocessing_status",
+                    "displayName": "reprocessing_status"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quarantined records (latest 100)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 32,
+            "width": 12,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

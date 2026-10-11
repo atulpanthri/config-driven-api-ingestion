@@ -1,0 +1,25 @@
+# Databricks Asset Bundle: deploys the config-driven ingestion framework as one serverless job.
+#   databricks bundle validate -t dev -p Atul
+#   databricks bundle deploy   -t dev -p Atul
+#   databricks bundle run weather_pipeline_job -t dev -p Atul --params source=usgs_earthquakes
+# Authentication comes from the local CLI profile; nothing secret is stored here.
+# Bundle name kept from the first version so the deployment path (and the job) stay the same.
+bundle:
+  name: weather_pipeline
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for all schemas
+    default: workspace
+  warehouse_id:
+    description: SQL warehouse used by the dashboards (Free Edition has one)
+    lookup:
+      warehouse: Serverless Starter Warehouse
+
+targets:
+  dev:
+    mode: development
+    default: true

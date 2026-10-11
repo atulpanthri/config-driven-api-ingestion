@@ -1,0 +1,17 @@
+# Settings shared by every source. Per-source settings live in sources/<source_name>.yml.
+catalog: workspace
+schemas:                        # one schema per layer; the job parameter schema_suffix (e.g. _edge) is appended
+  raw: met_raw                  # bronze: raw responses + landing volume
+  silver: met_silver            # typed, validated rows (MERGE)
+  gold: met_gold                # business aggregates (MERGE of affected keys)
+  audit: met_audit              # run_log, run_audit_dtl, schema_change_log
+  quarantine: met_quarantine    # rejected rows and payloads
+landing_volume: raw_landing     # UC Volume in the raw schema for raw files
+sources_dir: sources
+governance:                     # owner / steward / classification of the shared audit and quarantine tables
+  data_owner: data-engineering
+  data_steward: data-engineering
+  classification: internal
+sla:                            # demo service levels, shown on the Pipeline monitoring dashboard
+  max_run_seconds: 300          # expected completion = run start + 300 s; longer or FAILED = breach
+  freshness_hours: 24           # a successful extraction per entity at least every 24 h

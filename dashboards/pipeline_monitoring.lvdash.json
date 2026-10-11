@@ -1,0 +1,2879 @@
+{
+  "datasets": [
+    {
+      "name": "exec_kpi",
+      "displayName": "Execution KPIs (7 days)",
+      "queryLines": [
+        "SELECT r.source_name, COUNT(*) AS runs, COUNT_IF(r.status = 'SUCCESS') AS successful,\n       COUNT_IF(r.status = 'PARTIAL_SUCCESS') AS partial, COUNT_IF(r.status = 'FAILED') AS failed,\n       COALESCE(SUM(t.retries), 0) AS retries\nFROM workspace.met_audit.run_log r\nLEFT JOIN (SELECT run_id, SUM(retry_count) AS retries FROM workspace.met_audit.run_log_dtl GROUP BY run_id) t USING (run_id)\nWHERE r.start_time >= current_timestamp() - INTERVAL 7 DAYS AND r.status <> 'RUNNING'\nGROUP BY r.source_name\n"
+      ]
+    },
+    {
+      "name": "job_kpi",
+      "displayName": "Databricks job runs (7 days, all sources)",
+      "queryLines": [
+        "SELECT COUNT(DISTINCT run_id) AS job_runs,\n       COUNT(DISTINCT IF(result_state IN ('SKIPPED', 'CANCELLED', 'UPSTREAM_CANCELLED', 'EXCLUDED'), run_id, NULL))\n         AS skipped_or_cancelled,\n       COUNT(DISTINCT IF(result_state IN ('FAILED', 'ERROR', 'TIMED_OUT'), run_id, NULL)) AS job_failed\nFROM system.lakeflow.job_run_timeline\nWHERE job_id IN (SELECT job_id FROM system.lakeflow.jobs WHERE name LIKE '%api_ingest_job%') AND period_start_time >= current_timestamp() - INTERVAL 7 DAYS\n"
+      ]
+    },
+    {
+      "name": "perf",
+      "displayName": "Run performance",
+      "queryLines": [
+        "SELECT r.source_name, r.run_id, r.start_time, r.status, r.duration_seconds,\n       ROUND(AVG(timestampdiff(MILLISECOND, d.start_time, d.end_time)) / 1000.0, 2) AS avg_extraction_seconds\nFROM workspace.met_audit.run_log_dtl d JOIN workspace.met_audit.run_log r USING (run_id)\nWHERE r.status <> 'RUNNING' AND r.start_time >= current_timestamp() - INTERVAL 30 DAYS\nGROUP BY r.source_name, r.run_id, r.start_time, r.status, r.duration_seconds\n"
+      ]
+    },
+    {
+      "name": "stages",
+      "displayName": "Job task duration by stage (all sources)",
+      "queryLines": [
+        "SELECT task_key AS stage, ROUND(AVG(timestampdiff(MILLISECOND, period_start_time, period_end_time)) / 1000.0, 1)\n         AS avg_seconds, COUNT(*) AS task_runs\nFROM system.lakeflow.job_task_run_timeline\nWHERE job_id IN (SELECT job_id FROM system.lakeflow.jobs WHERE name LIKE '%api_ingest_job%') AND period_start_time >= current_timestamp() - INTERVAL 30 DAYS\nGROUP BY task_key\n"
+      ]
+    },
+    {
+      "name": "ingest",
+      "displayName": "Ingestion per run",
+      "queryLines": [
+        "SELECT r.source_name, r.run_id, r.start_time, r.source_rows, r.silver_valid_rows AS target_rows,\n       r.silver_rows_inserted + r.silver_rows_updated AS rows_written,\n       ROUND(r.source_rows / NULLIF(r.duration_seconds, 0), 1) AS rows_per_second\nFROM workspace.met_audit.run_log r WHERE r.start_time >= current_timestamp() - INTERVAL 7 DAYS AND r.status <> 'RUNNING'\n"
+      ]
+    },
+    {
+      "name": "ingest_long",
+      "displayName": "Source vs target records per run",
+      "queryLines": [
+        "SELECT r.source_name, r.start_time, 'source records' AS measure, r.source_rows AS record_count\nFROM workspace.met_audit.run_log r WHERE r.start_time >= current_timestamp() - INTERVAL 7 DAYS AND r.status <> 'RUNNING'\nUNION ALL\nSELECT r.source_name, r.start_time, 'target records (silver)', r.silver_valid_rows FROM workspace.met_audit.run_log r WHERE r.start_time >= current_timestamp() - INTERVAL 7 DAYS AND r.status <> 'RUNNING'\n"
+      ]
+    },
+    {
+      "name": "dq",
+      "displayName": "Data quality (7 days)",
+      "queryLines": [
+        "WITH runs AS (\n  SELECT r.source_name, SUM(r.source_rows) AS source_rows, SUM(r.silver_valid_rows) AS valid_rows,\n         SUM(r.quarantine_rows) AS rejected_rows\n  FROM workspace.met_audit.run_log r WHERE r.start_time >= current_timestamp() - INTERVAL 7 DAYS AND r.status <> 'RUNNING' GROUP BY r.source_name),\nq AS (\n  SELECT source_name,\n         COUNT_IF(exists(dq_errors, e -> e LIKE 'DUPLICATE%')) AS duplicate_rows,\n         COUNT_IF(exists(dq_errors, e -> e LIKE 'NULL%'))      AS null_rows\n  FROM workspace.met_quarantine.data_quarantine WHERE quarantined_at >= current_timestamp() - INTERVAL 7 DAYS GROUP BY source_name)\nSELECT runs.source_name, runs.source_rows, runs.valid_rows, runs.rejected_rows,\n       COALESCE(q.duplicate_rows, 0) AS duplicate_rows, COALESCE(q.null_rows, 0) AS null_rows,\n       ROUND(100.0 * COALESCE(q.null_rows, 0) / NULLIF(runs.source_rows, 0), 3) AS null_pct,\n       ROUND(100.0 * runs.rejected_rows / NULLIF(runs.source_rows, 0), 3) AS rejection_pct\nFROM runs LEFT JOIN q USING (source_name)\n"
+      ]
+    },
+    {
+      "name": "reasons",
+      "displayName": "Quarantine reasons",
+      "queryLines": [
+        "SELECT source_name, reason, COUNT(*) AS rows_quarantined\nFROM workspace.met_quarantine.data_quarantine LATERAL VIEW explode(dq_errors) x AS reason GROUP BY source_name, reason\n"
+      ]
+    },
+    {
+      "name": "sla",
+      "displayName": "SLA per run",
+      "queryLines": [
+        "SELECT r.source_name, r.run_id, r.start_time, r.status, r.duration_seconds,\n       timestampadd(SECOND, 300, r.start_time)                               AS expected_completion,\n       timestampadd(SECOND, CAST(r.duration_seconds AS INT), r.start_time)        AS actual_completion,\n       IF(r.status = 'FAILED' OR r.duration_seconds > 300, 'BREACHED', 'MET') AS sla_status,\n       IF(r.status = 'FAILED' OR r.duration_seconds > 300, 1, 0)              AS breach,\n       IF(r.status = 'FAILED' OR r.duration_seconds > 300, 0, 100)            AS met_pct\nFROM workspace.met_audit.run_log r WHERE r.start_time >= current_timestamp() - INTERVAL 7 DAYS AND r.status <> 'RUNNING'\n"
+      ]
+    },
+    {
+      "name": "fresh",
+      "displayName": "Freshness per entity",
+      "queryLines": [
+        "SELECT r.source_name, d.entity_name, MAX(d.end_time) AS last_successful_load,\n       ROUND(timestampdiff(MINUTE, MAX(d.end_time), current_timestamp()) / 60.0, 1) AS hours_since_load,\n       IF(timestampdiff(HOUR, MAX(d.end_time), current_timestamp()) <= 24, 'OK', 'STALE') AS freshness_sla,\n       IF(timestampdiff(HOUR, MAX(d.end_time), current_timestamp()) <= 24, 0, 1) AS stale\nFROM workspace.met_audit.run_log_dtl d JOIN workspace.met_audit.run_log r USING (run_id) WHERE d.status = 'SUCCESS' GROUP BY r.source_name, d.entity_name\n"
+      ]
+    },
+    {
+      "name": "latency",
+      "displayName": "Source-to-target latency per run",
+      "queryLines": [
+        "SELECT r.source_name, r.run_id, r.start_time,\n       ROUND(timestampdiff(MILLISECOND, MAX(d.end_time),\n             timestampadd(SECOND, CAST(r.duration_seconds AS INT), r.start_time)) / 1000.0, 1)\n         AS source_to_target_seconds\nFROM workspace.met_audit.run_log_dtl d JOIN workspace.met_audit.run_log r USING (run_id) WHERE r.start_time >= current_timestamp() - INTERVAL 7 DAYS AND r.status <> 'RUNNING' AND d.status = 'SUCCESS'\nGROUP BY r.source_name, r.run_id, r.start_time, r.duration_seconds\n"
+      ]
+    },
+    {
+      "name": "dbu",
+      "displayName": "DBU consumption of the job (30 days, all sources)",
+      "queryLines": [
+        "SELECT usage_date, sku_name, ROUND(SUM(usage_quantity), 3) AS dbu\nFROM system.billing.usage\nWHERE usage_metadata.job_id IN (SELECT job_id FROM system.lakeflow.jobs WHERE name LIKE '%api_ingest_job%') AND usage_date >= current_date() - INTERVAL 30 DAYS\nGROUP BY usage_date, sku_name\n"
+      ]
+    },
+    {
+      "name": "errors",
+      "displayName": "Errors by code and stage",
+      "queryLines": [
+        "SELECT r.source_name, CASE\n             WHEN d.error_type IN ('TIMEOUT', 'CONNECTION_ERROR', 'REQUEST_ERROR', 'PAGINATION_LIMIT')\n                  OR d.error_type LIKE 'HTTP%' THEN '1 extraction'\n             WHEN d.error_type IN ('NO_VALID_ROWS') THEN '3 data quality'\n             WHEN d.error_type = 'UNEXPECTED_ERROR' THEN '5 unexpected'\n             ELSE '2 parse & contract' END AS stage, d.error_type AS error_code, COUNT(*) AS failures,\n       MAX(d.start_time) AS last_seen\nFROM workspace.met_audit.run_log_dtl d JOIN workspace.met_audit.run_log r USING (run_id) WHERE d.status = 'FAILED' GROUP BY ALL\nUNION ALL\nSELECT r.source_name, '4 persist / run', 'RUN_FAILED', COUNT(*), MAX(r.start_time)\nFROM workspace.met_audit.run_log r WHERE r.status = 'FAILED' GROUP BY r.source_name\n"
+      ]
+    },
+    {
+      "name": "exceptions",
+      "displayName": "Recent exceptions",
+      "queryLines": [
+        "SELECT r.source_name, d.start_time, d.entity_name, CASE\n             WHEN d.error_type IN ('TIMEOUT', 'CONNECTION_ERROR', 'REQUEST_ERROR', 'PAGINATION_LIMIT')\n                  OR d.error_type LIKE 'HTTP%' THEN '1 extraction'\n             WHEN d.error_type IN ('NO_VALID_ROWS') THEN '3 data quality'\n             WHEN d.error_type = 'UNEXPECTED_ERROR' THEN '5 unexpected'\n             ELSE '2 parse & contract' END AS stage, d.error_type AS error_code,\n       d.http_status, d.attempt_count, d.error_message\nFROM workspace.met_audit.run_log_dtl d JOIN workspace.met_audit.run_log r USING (run_id) WHERE d.status = 'FAILED'\nUNION ALL\nSELECT r.source_name, r.start_time, '(run)', '4 persist / run', 'RUN_FAILED', NULL, NULL, r.error_message\nFROM workspace.met_audit.run_log r WHERE r.status = 'FAILED'\n"
+      ]
+    },
+    {
+      "name": "recon",
+      "displayName": "Reconciliation per run",
+      "queryLines": [
+        "SELECT r.source_name, r.run_id, r.start_time, r.status, r.source_rows, t.valid AS dq_valid,\n       t.rejected AS dq_rejected, r.source_rows - t.valid - t.rejected AS source_vs_dq_diff,\n       r.silver_valid_rows, r.silver_valid_rows - t.valid AS dq_vs_silver_diff,\n       r.silver_rows_inserted, r.silver_rows_updated,\n       r.silver_valid_rows - r.silver_rows_inserted - r.silver_rows_updated AS silver_unchanged,\n       IF(r.source_rows - t.valid - t.rejected = 0 AND r.silver_valid_rows = t.valid, 'OK', 'MISMATCH') AS recon_status,\n       IF(r.source_rows - t.valid - t.rejected = 0 AND r.silver_valid_rows = t.valid, 0, 1) AS mismatch\nFROM workspace.met_audit.run_log r\nJOIN (SELECT run_id, SUM(records_valid) AS valid, SUM(records_rejected) AS rejected\n      FROM workspace.met_audit.run_log_dtl GROUP BY run_id) t USING (run_id)\nWHERE r.status <> 'RUNNING'\n"
+      ]
+    },
+    {
+      "name": "edge_runs",
+      "displayName": "Edge-case runs",
+      "queryLines": [
+        "SELECT start_time, source_name, test_mode, status, job_failed, quarantine_rows, schema_events, error_message\nFROM workspace.met_audit_edge.run_log WHERE status <> 'RUNNING'\n"
+      ]
+    },
+    {
+      "name": "edge_q",
+      "displayName": "Edge-case quarantine",
+      "queryLines": [
+        "SELECT q.quarantined_at, q.source_name, r.test_mode, q.entity_id, q.rejection_level,\n       array_join(q.dq_errors, ', ') AS dq_errors, CAST(q.raw_values AS STRING) AS raw_values, q.error_details\nFROM workspace.met_quarantine_edge.data_quarantine q JOIN workspace.met_audit_edge.run_log r USING (run_id)\n"
+      ]
+    },
+    {
+      "name": "edge_s",
+      "displayName": "Edge-case schema events",
+      "queryLines": [
+        "SELECT s.detected_at, s.source_name, r.test_mode, s.entity_id, s.change_type, s.field_name, s.actual_type\nFROM workspace.met_audit_edge.schema_change_log s JOIN workspace.met_audit_edge.run_log r USING (run_id)\n"
+      ]
+    },
+    {
+      "name": "edge_f",
+      "displayName": "Edge-case entity failures",
+      "queryLines": [
+        "SELECT r.start_time, r.source_name, r.test_mode, d.entity_name, d.http_status, d.attempt_count, d.error_type,\n       d.error_message\nFROM workspace.met_audit_edge.run_log_dtl d JOIN workspace.met_audit_edge.run_log r USING (run_id) WHERE d.status = 'FAILED'\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "8fec13a9",
+      "displayName": "Pipeline health",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "63e27999",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Pipeline & data health\n",
+                "From `met_audit.run_log` (one row per run), `met_audit.run_log_dtl` (one row per entity), `met_quarantine` and Databricks system tables. Last 7 days unless stated."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "d7ab5b9a",
+            "queries": [
+              {
+                "name": "filter_0114caef",
+                "query": {
+                  "datasetName": "exec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_4e87d0d1",
+                "query": {
+                  "datasetName": "perf",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_d5c99fdb",
+                "query": {
+                  "datasetName": "ingest",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_24b921bb",
+                "query": {
+                  "datasetName": "ingest_long",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_63b8f910",
+                "query": {
+                  "datasetName": "dq",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_74b9bf83",
+                "query": {
+                  "datasetName": "reasons",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_ff71d0e5",
+                "query": {
+                  "datasetName": "sla",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_5db42acd",
+                "query": {
+                  "datasetName": "fresh",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_298610bf",
+                "query": {
+                  "datasetName": "latency",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_61f8e9cf",
+                "query": {
+                  "datasetName": "errors",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_93e37fc2",
+                "query": {
+                  "datasetName": "exceptions",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "filter_776d24a3",
+                "query": {
+                  "datasetName": "recon",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_0114caef"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_4e87d0d1"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_d5c99fdb"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_24b921bb"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_63b8f910"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_74b9bf83"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_ff71d0e5"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_5db42acd"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_298610bf"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_61f8e9cf"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_93e37fc2"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name",
+                    "queryName": "filter_776d24a3"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Source"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "57b4eca0",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Tiles marked *all sources* come from Databricks system tables (job level) and ignore the Source filter."
+              ]
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 8,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "6cf47ba8",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 1 \u00b7 Pipeline execution"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "9771d868",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "exec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`runs`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Total runs"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Total runs"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "def796ff",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "exec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`successful`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Successful"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Successful"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 4,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c86bf465",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "exec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`partial`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Partial"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Partial"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 4,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "6110f65b",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "exec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`failed`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Failed"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Failed"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 4,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "8bde63e5",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "exec_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`retries`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Retries"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Retries"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 4,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "078c588f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "job_kpi",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`skipped_or_cancelled`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Skipped/cancelled (all sources)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Skipped/cancelled (all sources)"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 4,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "7d12e9b6",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 2 \u00b7 Performance"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "ec425a21",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "perf",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "AVG(`duration_seconds`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Avg runtime (s)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg runtime (s)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "3c9b9c9f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "perf",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`duration_seconds`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Max runtime (s)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Max runtime (s)"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 7,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "0cb5c7f7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "perf",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "AVG(`avg_extraction_seconds`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Avg extraction latency per entity (s)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg extraction latency per entity (s)"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 7,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "b7ad3472",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "perf",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "duration_seconds",
+                      "expression": "`duration_seconds`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "start_time",
+                  "displayName": "Run start (UTC)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Run start (UTC)"
+                  }
+                },
+                "y": {
+                  "fieldName": "duration_seconds",
+                  "displayName": "seconds",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "seconds"
+                  }
+                },
+                "color": {
+                  "fieldName": "source_name",
+                  "displayName": "source_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Execution duration per run (s)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 8,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "2e597497",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "stages",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "stage",
+                      "expression": "`stage`"
+                    },
+                    {
+                      "name": "avg_seconds",
+                      "expression": "`avg_seconds`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "stage",
+                  "displayName": "Job task",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Job task"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg_seconds",
+                  "displayName": "seconds",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "seconds"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg task duration by stage (all sources)"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 9,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "6f05ebd7",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 3 \u00b7 Data ingestion"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "cb0a5013",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ingest",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`source_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Source records"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Source records"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "fe3e4476",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ingest",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`target_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Target records (silver)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Target records (silver)"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 15,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "4c570bda",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ingest",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "AVG(`rows_per_second`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Ingestion throughput (rows/s)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Ingestion throughput (rows/s)"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 15,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "6b05823e",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ingest_long",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "record_count",
+                      "expression": "`record_count`"
+                    },
+                    {
+                      "name": "measure",
+                      "expression": "`measure`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "start_time",
+                  "displayName": "Run start (UTC)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Run start (UTC)"
+                  }
+                },
+                "y": {
+                  "fieldName": "record_count",
+                  "displayName": "records",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "records"
+                  }
+                },
+                "color": {
+                  "fieldName": "measure",
+                  "displayName": "measure",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Source vs target records per run"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 17,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "31d796d9",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 4 \u00b7 Data quality"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 22,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "b7b26ee4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`valid_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Valid records"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Valid records"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 23,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "88efda0b",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`rejected_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Rejected records"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rejected records"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 23,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "dbea06a3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`duplicate_rows`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Duplicate records"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Duplicate records"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 23,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "f82980af",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "AVG(`null_pct`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Null %"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Null %"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 23,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "49baaaeb",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dq",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "AVG(`rejection_pct`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Rejection rate %"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Rejection rate %"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 23,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "caac9cd0",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "reasons",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "reason",
+                      "expression": "`reason`"
+                    },
+                    {
+                      "name": "rows_quarantined",
+                      "expression": "`rows_quarantined`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "reason",
+                  "displayName": "Reason",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Reason"
+                  }
+                },
+                "y": {
+                  "fieldName": "rows_quarantined",
+                  "displayName": "rows",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "rows"
+                  }
+                },
+                "color": {
+                  "fieldName": "source_name",
+                  "displayName": "source_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quarantine reasons"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "dee68664",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 5 \u00b7 SLA monitoring"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 30,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "ec0ad20a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sla",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`breach`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "SLA breaches"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "SLA breaches"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 31,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "1adc77de",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sla",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "AVG(`met_pct`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "SLA met %"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "SLA met %"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 31,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "3b37d7ad",
+            "multilineTextboxSpec": {
+              "lines": [
+                "**Targets** (framework.yml `sla`): run completes within **300 s** of start and does not FAIL; each entity loads successfully at least every **24 h**."
+              ]
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 31,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "bd7e5f53",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sla",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "duration_seconds",
+                      "expression": "`duration_seconds`"
+                    },
+                    {
+                      "name": "expected_completion",
+                      "expression": "`expected_completion`"
+                    },
+                    {
+                      "name": "actual_completion",
+                      "expression": "`actual_completion`"
+                    },
+                    {
+                      "name": "sla_status",
+                      "expression": "`sla_status`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "start_time"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "status"
+                  },
+                  {
+                    "fieldName": "duration_seconds",
+                    "displayName": "duration_seconds"
+                  },
+                  {
+                    "fieldName": "expected_completion",
+                    "displayName": "expected_completion"
+                  },
+                  {
+                    "fieldName": "actual_completion",
+                    "displayName": "actual_completion"
+                  },
+                  {
+                    "fieldName": "sla_status",
+                    "displayName": "sla_status"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Expected vs actual completion per run"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 33,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "0c600530",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 6 \u00b7 Data freshness"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 39,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "42d71070",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fresh",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "MAX(`hours_since_load`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Hours since last successful load (worst)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Hours since last successful load (worst)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 40,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "107c0917",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "latency",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "AVG(`source_to_target_seconds`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Avg source-to-target latency (s)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Avg source-to-target latency (s)"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 40,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "28a48129",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fresh",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`stale`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Stale entities"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Stale entities"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 40,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "a8f61180",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "fresh",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "entity_name",
+                      "expression": "`entity_name`"
+                    },
+                    {
+                      "name": "last_successful_load",
+                      "expression": "`last_successful_load`"
+                    },
+                    {
+                      "name": "hours_since_load",
+                      "expression": "`hours_since_load`"
+                    },
+                    {
+                      "name": "freshness_sla",
+                      "expression": "`freshness_sla`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "entity_name",
+                    "displayName": "entity_name"
+                  },
+                  {
+                    "fieldName": "last_successful_load",
+                    "displayName": "last_successful_load"
+                  },
+                  {
+                    "fieldName": "hours_since_load",
+                    "displayName": "hours_since_load"
+                  },
+                  {
+                    "fieldName": "freshness_sla",
+                    "displayName": "freshness_sla"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Last successful load per entity"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 42,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "5f95bfea",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 7 \u00b7 Infrastructure"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 48,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "c40c20d8",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dbu",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`dbu`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "DBUs, 30 days (all sources)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "DBUs, 30 days (all sources)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 49,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c1892aa5",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Serverless compute: CPU, memory and cluster utilisation are managed by Databricks and not exposed (`system.compute.node_timeline` covers classic clusters only). Cost is tracked as DBU consumption from `system.billing.usage` for this job."
+              ]
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 49,
+            "width": 8,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "26b1521d",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dbu",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "usage_date",
+                      "expression": "`usage_date`"
+                    },
+                    {
+                      "name": "dbu",
+                      "expression": "`dbu`"
+                    },
+                    {
+                      "name": "sku_name",
+                      "expression": "`sku_name`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "usage_date",
+                  "displayName": "Date",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "title": "Date"
+                  }
+                },
+                "y": {
+                  "fieldName": "dbu",
+                  "displayName": "DBU",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "DBU"
+                  }
+                },
+                "color": {
+                  "fieldName": "sku_name",
+                  "displayName": "sku_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "DBU consumption per day (all sources)"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 51,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "457a50b4",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 8 \u00b7 Error monitoring"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 56,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "3a0d84f5",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "errors",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "stage",
+                      "expression": "`stage`"
+                    },
+                    {
+                      "name": "failures",
+                      "expression": "`failures`"
+                    },
+                    {
+                      "name": "error_code",
+                      "expression": "`error_code`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "stage",
+                  "displayName": "Stage",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "title": "Stage"
+                  }
+                },
+                "y": {
+                  "fieldName": "failures",
+                  "displayName": "failures",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "failures"
+                  }
+                },
+                "color": {
+                  "fieldName": "error_code",
+                  "displayName": "error_code",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Failures by stage"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 57,
+            "width": 4,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "4b59ccd2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "errors",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "stage",
+                      "expression": "`stage`"
+                    },
+                    {
+                      "name": "error_code",
+                      "expression": "`error_code`"
+                    },
+                    {
+                      "name": "failures",
+                      "expression": "`failures`"
+                    },
+                    {
+                      "name": "last_seen",
+                      "expression": "`last_seen`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "stage",
+                    "displayName": "stage"
+                  },
+                  {
+                    "fieldName": "error_code",
+                    "displayName": "error_code"
+                  },
+                  {
+                    "fieldName": "failures",
+                    "displayName": "failures"
+                  },
+                  {
+                    "fieldName": "last_seen",
+                    "displayName": "last_seen"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Error codes"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 57,
+            "width": 8,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b97ea21b",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "exceptions",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "entity_name",
+                      "expression": "`entity_name`"
+                    },
+                    {
+                      "name": "stage",
+                      "expression": "`stage`"
+                    },
+                    {
+                      "name": "error_code",
+                      "expression": "`error_code`"
+                    },
+                    {
+                      "name": "http_status",
+                      "expression": "`http_status`"
+                    },
+                    {
+                      "name": "attempt_count",
+                      "expression": "`attempt_count`"
+                    },
+                    {
+                      "name": "error_message",
+                      "expression": "`error_message`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "start_time"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "entity_name",
+                    "displayName": "entity_name"
+                  },
+                  {
+                    "fieldName": "stage",
+                    "displayName": "stage"
+                  },
+                  {
+                    "fieldName": "error_code",
+                    "displayName": "error_code"
+                  },
+                  {
+                    "fieldName": "http_status",
+                    "displayName": "http_status"
+                  },
+                  {
+                    "fieldName": "attempt_count",
+                    "displayName": "attempt_count"
+                  },
+                  {
+                    "fieldName": "error_message",
+                    "displayName": "error_message"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Exception messages"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 63,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "195e96ca",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 9 \u00b7 Audit & reconciliation"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 69,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "7f7f87c3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "recon",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "name": "value",
+                      "expression": "SUM(`mismatch`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "value",
+                  "displayName": "Runs with reconciliation differences"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Runs with reconciliation differences"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 70,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "b05449cd",
+            "multilineTextboxSpec": {
+              "lines": [
+                "`source_rows = dq_valid + dq_rejected` (rows formed from payloads) and `silver_valid_rows = dq_valid` (rows sent to the silver MERGE); `silver_unchanged = valid \u2212 inserted \u2212 updated`. Any difference \u2260 0 is a MISMATCH."
+              ]
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 70,
+            "width": 8,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "224e4729",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "recon",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "run_id",
+                      "expression": "`run_id`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "source_rows",
+                      "expression": "`source_rows`"
+                    },
+                    {
+                      "name": "dq_valid",
+                      "expression": "`dq_valid`"
+                    },
+                    {
+                      "name": "dq_rejected",
+                      "expression": "`dq_rejected`"
+                    },
+                    {
+                      "name": "source_vs_dq_diff",
+                      "expression": "`source_vs_dq_diff`"
+                    },
+                    {
+                      "name": "silver_valid_rows",
+                      "expression": "`silver_valid_rows`"
+                    },
+                    {
+                      "name": "dq_vs_silver_diff",
+                      "expression": "`dq_vs_silver_diff`"
+                    },
+                    {
+                      "name": "silver_rows_inserted",
+                      "expression": "`silver_rows_inserted`"
+                    },
+                    {
+                      "name": "silver_rows_updated",
+                      "expression": "`silver_rows_updated`"
+                    },
+                    {
+                      "name": "silver_unchanged",
+                      "expression": "`silver_unchanged`"
+                    },
+                    {
+                      "name": "recon_status",
+                      "expression": "`recon_status`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "start_time"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "run_id",
+                    "displayName": "run_id"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "status"
+                  },
+                  {
+                    "fieldName": "source_rows",
+                    "displayName": "source_rows"
+                  },
+                  {
+                    "fieldName": "dq_valid",
+                    "displayName": "dq_valid"
+                  },
+                  {
+                    "fieldName": "dq_rejected",
+                    "displayName": "dq_rejected"
+                  },
+                  {
+                    "fieldName": "source_vs_dq_diff",
+                    "displayName": "source_vs_dq_diff"
+                  },
+                  {
+                    "fieldName": "silver_valid_rows",
+                    "displayName": "silver_valid_rows"
+                  },
+                  {
+                    "fieldName": "dq_vs_silver_diff",
+                    "displayName": "dq_vs_silver_diff"
+                  },
+                  {
+                    "fieldName": "silver_rows_inserted",
+                    "displayName": "silver_rows_inserted"
+                  },
+                  {
+                    "fieldName": "silver_rows_updated",
+                    "displayName": "silver_rows_updated"
+                  },
+                  {
+                    "fieldName": "silver_unchanged",
+                    "displayName": "silver_unchanged"
+                  },
+                  {
+                    "fieldName": "recon_status",
+                    "displayName": "recon_status"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Source / target reconciliation per run"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 72,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ]
+    },
+    {
+      "name": "cdd12638",
+      "displayName": "Edge-case runs",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "5d4d9fc3",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Edge-case evidence\n",
+                "Fault-injected runs (fixture mode) in the `*_edge` schemas (`met_audit_edge`, `met_quarantine_edge`, ...), so demo data never reaches the main tables."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "9c3b82da",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "edge_runs",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "test_mode",
+                      "expression": "`test_mode`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "job_failed",
+                      "expression": "`job_failed`"
+                    },
+                    {
+                      "name": "quarantine_rows",
+                      "expression": "`quarantine_rows`"
+                    },
+                    {
+                      "name": "schema_events",
+                      "expression": "`schema_events`"
+                    },
+                    {
+                      "name": "error_message",
+                      "expression": "`error_message`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "start_time"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "test_mode",
+                    "displayName": "test_mode"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "status"
+                  },
+                  {
+                    "fieldName": "job_failed",
+                    "displayName": "job_failed"
+                  },
+                  {
+                    "fieldName": "quarantine_rows",
+                    "displayName": "quarantine_rows"
+                  },
+                  {
+                    "fieldName": "schema_events",
+                    "displayName": "schema_events"
+                  },
+                  {
+                    "fieldName": "error_message",
+                    "displayName": "error_message"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Runs"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "7194ac16",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "edge_f",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "test_mode",
+                      "expression": "`test_mode`"
+                    },
+                    {
+                      "name": "entity_name",
+                      "expression": "`entity_name`"
+                    },
+                    {
+                      "name": "http_status",
+                      "expression": "`http_status`"
+                    },
+                    {
+                      "name": "attempt_count",
+                      "expression": "`attempt_count`"
+                    },
+                    {
+                      "name": "error_type",
+                      "expression": "`error_type`"
+                    },
+                    {
+                      "name": "error_message",
+                      "expression": "`error_message`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "start_time"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "test_mode",
+                    "displayName": "test_mode"
+                  },
+                  {
+                    "fieldName": "entity_name",
+                    "displayName": "entity_name"
+                  },
+                  {
+                    "fieldName": "http_status",
+                    "displayName": "http_status"
+                  },
+                  {
+                    "fieldName": "attempt_count",
+                    "displayName": "attempt_count"
+                  },
+                  {
+                    "fieldName": "error_type",
+                    "displayName": "error_type"
+                  },
+                  {
+                    "fieldName": "error_message",
+                    "displayName": "error_message"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Entity failures"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "f0024999",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "edge_q",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "quarantined_at",
+                      "expression": "`quarantined_at`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "test_mode",
+                      "expression": "`test_mode`"
+                    },
+                    {
+                      "name": "entity_id",
+                      "expression": "`entity_id`"
+                    },
+                    {
+                      "name": "rejection_level",
+                      "expression": "`rejection_level`"
+                    },
+                    {
+                      "name": "dq_errors",
+                      "expression": "`dq_errors`"
+                    },
+                    {
+                      "name": "raw_values",
+                      "expression": "`raw_values`"
+                    },
+                    {
+                      "name": "error_details",
+                      "expression": "`error_details`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "quarantined_at",
+                    "displayName": "quarantined_at"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "test_mode",
+                    "displayName": "test_mode"
+                  },
+                  {
+                    "fieldName": "entity_id",
+                    "displayName": "entity_id"
+                  },
+                  {
+                    "fieldName": "rejection_level",
+                    "displayName": "rejection_level"
+                  },
+                  {
+                    "fieldName": "dq_errors",
+                    "displayName": "dq_errors"
+                  },
+                  {
+                    "fieldName": "raw_values",
+                    "displayName": "raw_values"
+                  },
+                  {
+                    "fieldName": "error_details",
+                    "displayName": "error_details"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quarantine"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "6abdf8f1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "edge_s",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "name": "detected_at",
+                      "expression": "`detected_at`"
+                    },
+                    {
+                      "name": "source_name",
+                      "expression": "`source_name`"
+                    },
+                    {
+                      "name": "test_mode",
+                      "expression": "`test_mode`"
+                    },
+                    {
+                      "name": "entity_id",
+                      "expression": "`entity_id`"
+                    },
+                    {
+                      "name": "change_type",
+                      "expression": "`change_type`"
+                    },
+                    {
+                      "name": "field_name",
+                      "expression": "`field_name`"
+                    },
+                    {
+                      "name": "actual_type",
+                      "expression": "`actual_type`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "detected_at",
+                    "displayName": "detected_at"
+                  },
+                  {
+                    "fieldName": "source_name",
+                    "displayName": "source_name"
+                  },
+                  {
+                    "fieldName": "test_mode",
+                    "displayName": "test_mode"
+                  },
+                  {
+                    "fieldName": "entity_id",
+                    "displayName": "entity_id"
+                  },
+                  {
+                    "fieldName": "change_type",
+                    "displayName": "change_type"
+                  },
+                  {
+                    "fieldName": "field_name",
+                    "displayName": "field_name"
+                  },
+                  {
+                    "fieldName": "actual_type",
+                    "displayName": "actual_type"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Schema events"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 16,
+            "width": 12,
+            "height": 4
+          }
+        }
+      ]
+    }
+  ]
+}
